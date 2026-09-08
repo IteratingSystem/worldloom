@@ -1358,9 +1358,9 @@ world.getSystem(DebuffSystem.class)
 ```
 
 可用回调包括首次生效 `onApplied`、重复添加 `onRefreshed`、逐帧更新 `onUpdate`、
-周期触发 `onTick` 和结束清理 `onRemoved`。活动效果保存在 `Debuffs.effects` 列表；
-其中 `DebuffState` 只记录名称、剩余时间、周期进度和效果自己的少量数据，因此切图或
-读档后可以从原剩余时间继续运行。
+周期触发 `onTick` 和结束清理 `onRemoved`。`Debuffs.effects` 只保存当前效果的字符串
+名称；计时状态只存在于 `DebuffSystem` 内存中，不写入存档。读档或重新创建实体后，
+效果会按照自身定义的完整持续时间重新开始。
 通过事件动态添加时，实体不需要预先在Tiled中挂 `Debuffs`，系统会自动创建。
 
 ## 23. 从 LTAE 3.8.2.37 迁移

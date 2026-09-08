@@ -5,6 +5,7 @@ import com.artemis.annotations.All;
 import com.artemis.systems.IteratingSystem;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.utils.IntMap;
 import com.badlogic.gdx.utils.ObjectMap;
 import net.mostlyoriginal.api.event.common.Subscribe;
 import org.worldloom.component.Debuffs;
@@ -21,6 +22,7 @@ public final class DebuffSystem extends IteratingSystem {
     private static final int MAX_TICKS_PER_FRAME = 32;
 
     private final ObjectMap<String, DebuffHandler> handlers = new ObjectMap<>();
+    private final IntMap<Array<DebuffState>> runtimeStates = new IntMap<>();
     private ComponentMapper<Debuffs> mDebuffs;
 
     /** 注册具体Debuff定义；持续时间、周期和行为均由定义自身提供。 */
@@ -36,17 +38,18 @@ public final class DebuffSystem extends IteratingSystem {
         handlers.put(name, handler);
     }
 
-    /** 查询实体是否拥有指定Debuff。 */
+    /** 查询实体是否拥有指定Debuff名称。 */
     public boolean has(int entityId, String name) {
-        return get(entityId, name) != null;
+        return isActiveEntity(entityId) && mDebuffs.has(entityId)
+            && mDebuffs.get(entityId).has(name);
     }
 
-    /** 获取指定Debuff的剩余运行状态；不存在时返回null。 */
+    /** 获取当前会话中的计时状态；读档后该状态会重新开始。 */
     public DebuffState get(int entityId, String name) {
-        if (!isActiveEntity(entityId) || !mDebuffs.has(entityId)) {
+        if (!has(entityId, name)) {
             return null;
         }
-        return mDebuffs.get(entityId).find(name);
+        return findState(runtimeStates.get(entityId), name);
     }
 
     @Subscribe
@@ -68,9 +71,12 @@ public final class DebuffSystem extends IteratingSystem {
     protected void process(int entityId) {
         Debuffs debuffs = mDebuffs.get(entityId);
         ensureEffects(debuffs);
+        Array<DebuffState> states = states(entityId);
+        synchronize(entityId, debuffs, states);
+
         float delta = Math.max(0f, world.getDelta());
-        for (int i = debuffs.effects.size - 1; i >= 0; i--) {
-            DebuffState state = debuffs.effects.get(i);
+        for (int i = states.size - 1; i >= 0; i--) {
+            DebuffState state = states.get(i);
             DebuffHandler handler = handlers.get(state.name);
             if (handler != null && !state.activated) {
                 state.activated = true;
@@ -88,10 +94,37 @@ public final class DebuffSystem extends IteratingSystem {
             if (!state.isPermanent()) {
                 state.remaining -= delta;
                 if (state.remaining <= 0f) {
-                    debuffs.effects.removeIndex(i);
+                    states.removeIndex(i);
+                    debuffs.effects.removeValue(state.name, false);
                     notifyRemoved(entityId, state,
                         DebuffRemovalReason.EXPIRED);
                 }
+            }
+        }
+    }
+
+    @Override
+    protected void removed(int entityId) {
+        runtimeStates.remove(entityId);
+    }
+
+    private void synchronize(int entityId, Debuffs debuffs,
+                             Array<DebuffState> states) {
+        for (int i = states.size - 1; i >= 0; i--) {
+            DebuffState state = states.get(i);
+            if (!debuffs.has(state.name)) {
+                states.removeIndex(i);
+                notifyRemoved(entityId, state, DebuffRemovalReason.REMOVED);
+            }
+        }
+        for (String name : debuffs.effects) {
+            if (name == null || name.isBlank()
+                || findState(states, name) != null) {
+                continue;
+            }
+            DebuffHandler handler = handlers.get(name);
+            if (handler != null) {
+                states.add(createState(name, handler));
             }
         }
     }
@@ -107,19 +140,29 @@ public final class DebuffSystem extends IteratingSystem {
         Debuffs debuffs = mDebuffs.has(entityId)
             ? mDebuffs.get(entityId) : mDebuffs.create(entityId);
         ensureEffects(debuffs);
-        DebuffState existing = debuffs.find(name);
+        if (!debuffs.effects.contains(name, false)) {
+            debuffs.effects.add(name);
+        }
+
+        Array<DebuffState> states = states(entityId);
+        DebuffState existing = findState(states, name);
         if (existing != null) {
             resetTimer(existing, handler);
             handler.onRefreshed(context(entityId, existing));
             return;
         }
 
-        DebuffState created = new DebuffState();
-        created.name = name;
-        resetTimer(created, handler);
-        debuffs.effects.add(created);
+        DebuffState created = createState(name, handler);
+        states.add(created);
         created.activated = true;
         handler.onApplied(context(entityId, created));
+    }
+
+    private DebuffState createState(String name, DebuffHandler handler) {
+        DebuffState state = new DebuffState();
+        state.name = name;
+        resetTimer(state, handler);
+        return state;
     }
 
     private void resetTimer(DebuffState state, DebuffHandler handler) {
@@ -155,9 +198,12 @@ public final class DebuffSystem extends IteratingSystem {
             return;
         }
         Debuffs debuffs = mDebuffs.get(entityId);
-        DebuffState state = debuffs.find(name);
+        ensureEffects(debuffs);
+        debuffs.effects.removeValue(name, false);
+        Array<DebuffState> states = runtimeStates.get(entityId);
+        DebuffState state = findState(states, name);
         if (state != null) {
-            debuffs.effects.removeValue(state, true);
+            states.removeValue(state, true);
             notifyRemoved(entityId, state, reason);
         }
     }
@@ -168,8 +214,13 @@ public final class DebuffSystem extends IteratingSystem {
         }
         Debuffs debuffs = mDebuffs.get(entityId);
         ensureEffects(debuffs);
-        for (int i = debuffs.effects.size - 1; i >= 0; i--) {
-            DebuffState state = debuffs.effects.removeIndex(i);
+        debuffs.effects.clear();
+        Array<DebuffState> states = runtimeStates.get(entityId);
+        if (states == null) {
+            return;
+        }
+        for (int i = states.size - 1; i >= 0; i--) {
+            DebuffState state = states.removeIndex(i);
             notifyRemoved(entityId, state, DebuffRemovalReason.CLEARED);
         }
     }
@@ -184,6 +235,27 @@ public final class DebuffSystem extends IteratingSystem {
 
     private DebuffContext context(int entityId, DebuffState state) {
         return new DebuffContext(world, entityId, state);
+    }
+
+    private Array<DebuffState> states(int entityId) {
+        Array<DebuffState> states = runtimeStates.get(entityId);
+        if (states == null) {
+            states = new Array<>();
+            runtimeStates.put(entityId, states);
+        }
+        return states;
+    }
+
+    private DebuffState findState(Array<DebuffState> states, String name) {
+        if (states == null) {
+            return null;
+        }
+        for (DebuffState state : states) {
+            if (state.name.equals(name)) {
+                return state;
+            }
+        }
+        return null;
     }
 
     private void ensureEffects(Debuffs debuffs) {

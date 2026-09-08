@@ -63,8 +63,7 @@ class DebuffSystemTest {
         world.process();
         system.onEvent(DebuffEvent.add(entityId, "bleeding"));
 
-        DebuffState state = world.getMapper(Debuffs.class)
-            .get(entityId).find("bleeding");
+        DebuffState state = system.get(entityId, "bleeding");
         assertNotNull(state);
         assertEquals(2f, state.remaining);
         assertEquals(1, handler.refreshed);
