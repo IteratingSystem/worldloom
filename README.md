@@ -305,6 +305,7 @@ public class Health extends SerializeComponent {
 | `StateComp` | 通过枚举简单类名建立 gdx-ai 状态机，保存前记录当前状态 |
 | `StoryComp` | 保存 Ink 剧本名称、运行状态和初始节点；语言与具体剧情逻辑由游戏实现 |
 | `BTree` | 通过 `treeName` 绑定 `.tree` 资源并以实体作为黑板对象 |
+| `NavigationAgent` | 导航系统按需创建的运行时路径状态，不需要在Tiled中挂载 |
 | `TileAnimation` | 单个 Tiled 动画，支持 LibGDX `Animation.PlayMode`、暂停和帧查询 |
 | `TileAnimations` | 从 tileset 收集多个具名动画，通过 `current` 切换 |
 | `LayerSampling` | 把某地图瓦片层采样为实体纹理，可跟随该层动画 |
@@ -799,6 +800,7 @@ public enum PlayerState implements State<Entity> {
 | `TimeSleep` | `time` | 固定时长等待 |
 | `RandomSleep` | `start`, `end` | 随机时长等待 |
 | `Range` | `targetEntityTag`, `radius` | 判断目标实体是否进入范围 |
+| `MoveTo` | `x`, `y`, `targetTag`, `stopDistance` | 沿当前地图导航网格移动 |
 
 ## 13. Scene2D UI 与库存
 
@@ -1205,7 +1207,163 @@ events.dispatch(AudioEvent.useCameraListener());
 - `Sound` 后端没有完成回调。一次性音效的句柄会在配置的跟踪时间后清理，但声音本身由 LibGDX 正常播放。
 - 音频偏好设置可直接转换成 master 与各总线音量事件，不需要业务系统持有 LibGDX 音频对象。
 
-## 21. 从 LTAE 3.8.2.37 迁移
+## 21. 寻路与行为树移动
+
+`NavigationSystem` 使用 gdx-ai 的八方向 A*。地图只提供导航网格范围和瓦片尺寸，
+障碍直接读取当前 Box2D 世界中非传感器的静态 Fixture，因此瓦片碰撞、建筑实体和
+其他静态形状共用同一份物理结果。地图切换后会自动丢弃旧图缓存；A* 只在发起请求时
+运行，不会每帧重新计算。
+
+### 21.1 配置道路偏好
+
+可以为每张地图指定一个道路瓦片层。道路不是可通行边界：整个地图仍然可以行走，
+Box2D Fixture仍然是硬障碍，道路格只拥有更低的寻路代价，使角色在合理距离内优先
+绕行道路而不是穿过草地：
+
+```java
+WorldloomConfig.builder()
+    .navigationRoadLayer("island", "ROAD")
+    .navigationCosts(1f, 4f);
+```
+
+`navigationCosts`依次接收道路代价与非道路代价，必须满足
+`0 < roadCost <= offRoadCost`。道路层可以隐藏；格子内存在任意瓦片即视为道路。
+没有配置道路层的地图保持普通等权寻路。
+
+### 21.2 在 Tiled 中配置可寻路角色
+
+需要寻路的角色必须同时具有：
+
+- `Pos`：保存角色的Tiled像素坐标。使用默认自动组件配置时不需要手动添加。
+- `B2dBody`：提供实际移动和碰撞；NPC通常使用 `DynamicBody` 并开启固定旋转。
+
+挂载步骤：
+
+1. 确认Tiled项目导入的是Island中的 `assets/tiled/propertytypes.json`。
+2. 在地图的实体对象层中选中需要寻路的角色对象。
+3. 给对象挂载 `BTree`，并在行为树中使用 `MoveTo`。
+4. 确认对象同时挂有 `B2dBody`，并且角色使用的瓦片已经定义所需Fixture。
+5. 保存地图。无需在Island中注册 `NavigationSystem`，引擎会按固定顺序自动安装。
+
+`NavigationAgent` 会在第一次寻路时自动创建，默认参数为：
+
+- `speed`：移动速度，单位为 Tiled 像素/秒。
+- `radius`：实体中心需要与障碍保持的净空，单位为 Tiled 像素。
+- `waypointTolerance`：到达中间路径点的容差，单位为 Tiled 像素。
+
+`radius`应参考角色脚底碰撞体的水平半径，而不是整张角色纹理的宽度。例如角色纹理宽
+32px，但脚底Fixture只有8px宽时，`radius`可先设置为 `4`。数值过大会使角色无法通过
+窄路，设置为 `0` 则只按导航格中心判断障碍。Island当前角色移动速度约为25时，可先使用：
+
+```text
+speed: 25
+radius: 4
+waypointTolerance: 1
+```
+
+游戏代码也可以先取得或创建 `NavigationAgent` 调整这些参数；普通行为树角色无需处理。
+
+### 21.3 通过代码发起寻路
+
+引擎已经按固定顺序安装 `NavigationSystem`，游戏项目不需要再次注册。业务代码可直接发起导航：
+
+```java
+NavigationSystem navigation = world.getSystem(NavigationSystem.class);
+int requestId = navigation.navigate(npcEntityId, targetX, targetY, 4f);
+NavigationStatus status = navigation.getStatus(npcEntityId, requestId);
+navigation.cancel(npcEntityId);
+```
+
+第四个参数是允许停止的目标距离。每个请求都有独立编号；若同一实体收到新请求，旧编号查询时会返回 `FAILED`，避免旧任务误判新路径的结果。
+
+### 21.4 通过行为树发起寻路
+
+要让角色由行为树控制，还需要在同一个Tiled对象上添加 `BTree`，并把 `treeName` 设置为
+行为树文件名（不包含 `.tree` 后缀）。该 `.tree` 文件必须位于游戏资源目录并进入
+`assets.txt`，以便Worldloom资源管理器自动加载。
+
+行为树可使用内置 `MoveTo` 叶节点。使用坐标目标：
+
+```text
+import moveTo:"org.worldloom.ai.MoveTo"
+
+root
+  moveTo x:320 y:240 stopDistance:2
+```
+
+或者使用实体 Tag，非空的 `targetTag` 优先于 `x/y`：
+
+```text
+import moveTo:"org.worldloom.ai.MoveTo"
+
+root
+  moveTo targetTag:"PLAYER" stopDistance:24
+```
+
+目标 Tag 在任务开始时解析，本版本不持续追踪移动目标。无路径、目标越界、目标位于障碍格或缺少必要组件时任务返回 `FAILED`；到达返回 `SUCCEEDED`，其余时间返回 `RUNNING`。任务被行为树中断时会取消导航并停止实体。
+
+### 21.5 使用边界
+
+当前实现只负责已加载地图内的静态 Box2D 障碍。传感器和动态 Body 不会固化进导航图，
+动态实体之间仍由 Box2D 碰撞处理；跨地图路线、后台 NPC 模拟和动态障碍重规划不属于这一层。
+
+如果游戏在当前地图运行期间创建或删除了静态Fixture，应调用
+`world.getSystem(NavigationSystem.class).invalidate()`，让下一次寻路请求重新读取Box2D世界。
+
+## 22. Debuff系统
+
+Worldloom只管理Debuff名称、剩余时间和通用生命周期，不包含扣血、减速、动画或
+粒子等游戏规则。持续时间、周期和具体行为全部由游戏项目中的Debuff实现决定；
+同名效果再次添加时会刷新持续时间。
+
+引擎会按固定顺序安装 `DebuffSystem`，游戏项目不需要重复注册。施加效果时发送事件：
+
+```java
+eventSystem.dispatch(DebuffEvent.add(entityId, "poison"));
+```
+
+移除一个效果或清空实体全部效果：
+
+```java
+eventSystem.dispatch(DebuffEvent.remove(entityId, "poison"));
+eventSystem.dispatch(DebuffEvent.clear(entityId));
+```
+
+游戏项目通过实现 `DebuffHandler` 定义效果：
+
+```java
+public final class PoisonHandler implements DebuffHandler {
+    @Override
+    public float getDuration() {
+        return 10f;
+    }
+
+    @Override
+    public float getTickInterval() {
+        return 1f;
+    }
+
+    @Override
+    public void onTick(DebuffContext context) {
+        // 在游戏项目中查找自己的生命组件并扣除伤害
+    }
+}
+```
+
+在游戏系统初始化时注册：
+
+```java
+world.getSystem(DebuffSystem.class)
+    .registerHandler("poison", new PoisonHandler());
+```
+
+可用回调包括首次生效 `onApplied`、重复添加 `onRefreshed`、逐帧更新 `onUpdate`、
+周期触发 `onTick` 和结束清理 `onRemoved`。活动效果保存在 `Debuffs.effects` 列表；
+其中 `DebuffState` 只记录名称、剩余时间、周期进度和效果自己的少量数据，因此切图或
+读档后可以从原剩余时间继续运行。
+通过事件动态添加时，实体不需要预先在Tiled中挂 `Debuffs`，系统会自动创建。
+
+## 23. 从 LTAE 3.8.2.37 迁移
 
 Worldloom 4.0.0 是一次破坏性升级，旧版本和旧 Git 标签继续保留。迁移时需要同时完成以下修改：
 

@@ -30,4 +30,11 @@ public class TimeSleep extends EcsLeafTask {
         }
         return Status.RUNNING;
     }
+
+    @Override
+    protected Task<com.artemis.Entity> copyTo(Task<com.artemis.Entity> task) {
+        TimeSleep copy = (TimeSleep)task;
+        copy.time = time;
+        return copy;
+    }
 }

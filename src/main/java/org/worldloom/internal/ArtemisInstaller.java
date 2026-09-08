@@ -30,12 +30,14 @@ import org.worldloom.system.BTreeSystem;
 import org.worldloom.system.CameraSystem;
 import org.worldloom.system.DynamicAmbientLight;
 import org.worldloom.system.DynamicSunLight;
+import org.worldloom.system.DebuffSystem;
 import org.worldloom.system.EntityFactory;
 import org.worldloom.system.InputProcessSystem;
 import org.worldloom.system.KeyframeShapeSystem;
 import org.worldloom.system.LayerSamplingSystem;
 import org.worldloom.system.LightSystem;
 import org.worldloom.system.MapTransitionSystem;
+import org.worldloom.system.NavigationSystem;
 import org.worldloom.system.OnInteractSystem;
 import org.worldloom.system.PointLightSystem;
 import org.worldloom.system.PixelPerfectCompositeSystem;
@@ -111,7 +113,13 @@ public final class ArtemisInstaller {
         builder.with(new PosFollowBodySystem(config.getWorldScale()));
         builder.with(new BTreeSystem());
         builder.with(new StateSystem());
+        builder.with(new DebuffSystem());
         add(builder, gameSystems.systemsFor(EnginePhase.UPDATE));
+        builder.with(new NavigationSystem(
+            config.getWorldScale(),
+            config.getNavigationRoadLayers(),
+            config.getNavigationRoadCost(),
+            config.getNavigationOffRoadCost()));
         builder.with(cameraSystem);
         builder.with(new AudioSystem(audioConfig));
         builder.with(new KeyframeShapeSystem());

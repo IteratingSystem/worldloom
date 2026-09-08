@@ -21,6 +21,8 @@ public class BTreeSystem extends IteratingSystem {
     @Override
     protected void process(int entityId) {
         BTree bTree = mBTree.get(entityId);
-        bTree.tree.step();
+        if (bTree.tree != null) {
+            bTree.tree.step();
+        }
     }
 }

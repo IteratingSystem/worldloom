@@ -35,4 +35,12 @@ public class RandomSleep extends EcsLeafTask {
         }
         return Status.RUNNING;
     }
+
+    @Override
+    protected Task<com.artemis.Entity> copyTo(Task<com.artemis.Entity> task) {
+        RandomSleep copy = (RandomSleep)task;
+        copy.start = start;
+        copy.end = end;
+        return copy;
+    }
 }

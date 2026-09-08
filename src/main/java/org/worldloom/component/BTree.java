@@ -43,7 +43,8 @@ public class BTree extends SerializeComponent {
         BehaviorTree<?> rawTree = bTreeData.get(treeName);
         if (rawTree instanceof BehaviorTree<?>) {
             @SuppressWarnings("unchecked")
-            BehaviorTree<Entity> typedTree = (BehaviorTree<Entity>) rawTree;
+            BehaviorTree<Entity> typedTree =
+                (BehaviorTree<Entity>)rawTree.cloneTask();
             tree = typedTree;
             tree.setObject(entity);
             tree.start();

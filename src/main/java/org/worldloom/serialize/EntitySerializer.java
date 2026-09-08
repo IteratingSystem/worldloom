@@ -122,8 +122,10 @@ public class EntitySerializer {
             if (isSetMapMsg){
                 break;
             }
-            if (component instanceof SerializeComponent serializeComponent) {
-                entity.mapObjectId = serializeComponent.mapObject.getProperties().get("id",-1,Integer.class);
+            if (component instanceof SerializeComponent serializeComponent
+                && serializeComponent.mapObject != null) {
+                entity.mapObjectId = serializeComponent.mapObject.getProperties()
+                    .get("id", -1, Integer.class);
                 entity.fromMap = serializeComponent.fromMap;
                 isSetMapMsg = true;
             }
@@ -296,38 +298,7 @@ public class EntitySerializer {
 //                            }
 //                        }
                         if (value instanceof Array<?> arrayValue && arrayValue.notEmpty()) {
-                            try {
-                                Type genericType = field.getGenericType();
-                                if (genericType instanceof ParameterizedType pt) {
-                                    Type actualType = pt.getActualTypeArguments()[0];
-                                    // 只处理元素类型是 Enum 的情况（包括一层泛型）
-                                    if (actualType instanceof Class<?> elementType && Enum.class.isAssignableFrom(elementType)) {
-                                        @SuppressWarnings("unchecked")
-                                        Array<Object> rawArray = (Array<Object>) arrayValue;
-                                        for (int i = 0; i < rawArray.size; i++) {
-                                            Object elem = rawArray.get(i);
-                                            if (elem == null) continue;
-                                            // 如果元素是字符串，尝试转成枚举
-                                            if (elem instanceof String s) {
-                                                try {
-                                                    rawArray.set(i, Enum.valueOf(elementType.asSubclass(Enum.class), s));
-                                                } catch (IllegalArgumentException e) {
-                                                    Gdx.app.error(TAG, "Invalid enum value: " + s + " for field " + key);
-                                                }
-                                            } else if (!elementType.isInstance(elem)) {
-                                                // 若不是枚举实例，用 coerceType 尝试转换（保留兼容性）
-                                                Object converted = coerceType(elem, elementType);
-                                                if (converted != null) {
-                                                    rawArray.set(i, converted);
-                                                }
-                                            }
-                                        }
-                                    }
-                                    // 嵌套泛型（如 Array<Array<...>>）不做元素转换，直接使用原值
-                                }
-                            } catch (Exception e) {
-                                Gdx.app.error(TAG, "Failed to convert Array elements for field " + key + ": " + e.getMessage());
-                            }
+                            restoreArrayElements(field, key, arrayValue);
                         }
 
                         field.set(component, value);
@@ -384,6 +355,45 @@ public class EntitySerializer {
             if (type == boolean.class || type == Boolean.class) return Boolean.parseBoolean(s);
         }
         return value;
+    }
+
+    /** 按字段泛型恢复存档中的数组元素，避免自定义对象被保留为通用Map。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    static void restoreArrayElements(Field field, String fieldName,
+                                     Array<?> arrayValue) {
+        Type genericType = field.getGenericType();
+        if (!(genericType instanceof ParameterizedType parameterizedType)) {
+            return;
+        }
+        Type actualType = parameterizedType.getActualTypeArguments()[0];
+        if (!(actualType instanceof Class<?> elementType)) {
+            // 嵌套泛型由具体组件负责，避免丢失其内部类型信息。
+            return;
+        }
+
+        Array<Object> rawArray = (Array<Object>) arrayValue;
+        for (int i = 0; i < rawArray.size; i++) {
+            Object element = rawArray.get(i);
+            if (element == null || elementType.isInstance(element)) {
+                continue;
+            }
+            try {
+                Object restored;
+                if (elementType.isEnum() && element instanceof String name) {
+                    restored = Enum.valueOf(elementType.asSubclass(Enum.class), name);
+                } else {
+                    Object coerced = coerceType(element, elementType);
+                    restored = elementType.isInstance(coerced)
+                        ? coerced
+                        : JsonManager.getJson().fromJson(elementType,
+                            JsonManager.getJson().toJson(element));
+                }
+                rawArray.set(i, restored);
+            } catch (RuntimeException exception) {
+                Gdx.app.error(TAG, "Failed to restore array element for field "
+                    + fieldName + " at index " + i, exception);
+            }
+        }
     }
 
 

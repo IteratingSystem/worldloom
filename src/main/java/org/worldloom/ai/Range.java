@@ -47,4 +47,13 @@ public class Range extends EcsLeafTask {
         }
         return Status.FAILED;
     }
+
+    @Override
+    protected com.badlogic.gdx.ai.btree.Task<com.artemis.Entity> copyTo(
+        com.badlogic.gdx.ai.btree.Task<com.artemis.Entity> task) {
+        Range copy = (Range)task;
+        copy.targetEntityTag = targetEntityTag;
+        copy.radius = radius;
+        return copy;
+    }
 }

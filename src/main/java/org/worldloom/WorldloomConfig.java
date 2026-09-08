@@ -16,6 +16,7 @@ import org.worldloom.component.ZIndex;
 public final class WorldloomConfig {
     private final ObjectMap<String, String> entityLayers;
     private final ObjectMap<String, String[]> physicsLayers;
+    private final ObjectMap<String, String> navigationRoadLayers;
     private final Array<Class<? extends Component>> autoComponents;
     private final int uiWidth;
     private final int uiHeight;
@@ -29,6 +30,8 @@ public final class WorldloomConfig {
     private final boolean allowPhysicsSleep;
     private final boolean combineTileShapes;
     private final boolean legacyBox2dLightsEnabled;
+    private final float navigationRoadCost;
+    private final float navigationOffRoadCost;
     private final PixelPerfectCameraConfig pixelPerfectCameraConfig;
     private final String initialMap;
     private final String skinPath;
@@ -36,6 +39,7 @@ public final class WorldloomConfig {
     private WorldloomConfig(Builder builder) {
         entityLayers = copyStringMap(builder.entityLayers);
         physicsLayers = copyArrayMap(builder.physicsLayers);
+        navigationRoadLayers = copyStringMap(builder.navigationRoadLayers);
         autoComponents = new Array<>(builder.autoComponents);
         uiWidth = builder.uiWidth;
         uiHeight = builder.uiHeight;
@@ -49,6 +53,8 @@ public final class WorldloomConfig {
         allowPhysicsSleep = builder.allowPhysicsSleep;
         combineTileShapes = builder.combineTileShapes;
         legacyBox2dLightsEnabled = builder.legacyBox2dLightsEnabled;
+        navigationRoadCost = builder.navigationRoadCost;
+        navigationOffRoadCost = builder.navigationOffRoadCost;
         pixelPerfectCameraConfig = builder.pixelPerfectCameraConfig;
         initialMap = builder.initialMap;
         skinPath = builder.skinPath;
@@ -58,6 +64,9 @@ public final class WorldloomConfig {
 
     public ObjectMap<String, String> getEntityLayers() { return copyStringMap(entityLayers); }
     public ObjectMap<String, String[]> getPhysicsLayers() { return copyArrayMap(physicsLayers); }
+    public ObjectMap<String, String> getNavigationRoadLayers() {
+        return copyStringMap(navigationRoadLayers);
+    }
     public Array<Class<? extends Component>> getAutoComponents() { return new Array<>(autoComponents); }
     public int getUiWidth() { return uiWidth; }
     public int getUiHeight() { return uiHeight; }
@@ -71,6 +80,8 @@ public final class WorldloomConfig {
     public boolean isPhysicsSleepAllowed() { return allowPhysicsSleep; }
     public boolean isCombineTileShapes() { return combineTileShapes; }
     public boolean isLegacyBox2dLightsEnabled() { return legacyBox2dLightsEnabled; }
+    public float getNavigationRoadCost() { return navigationRoadCost; }
+    public float getNavigationOffRoadCost() { return navigationOffRoadCost; }
     public PixelPerfectCameraConfig getPixelPerfectCameraConfig() {
         return pixelPerfectCameraConfig;
     }
@@ -94,6 +105,7 @@ public final class WorldloomConfig {
     public static final class Builder {
         private final ObjectMap<String, String> entityLayers = new ObjectMap<>();
         private final ObjectMap<String, String[]> physicsLayers = new ObjectMap<>();
+        private final ObjectMap<String, String> navigationRoadLayers = new ObjectMap<>();
         private final Array<Class<? extends Component>> autoComponents = new Array<>();
         private int uiWidth = 640;
         private int uiHeight = 480;
@@ -107,6 +119,8 @@ public final class WorldloomConfig {
         private boolean allowPhysicsSleep;
         private boolean combineTileShapes = true;
         private boolean legacyBox2dLightsEnabled;
+        private float navigationRoadCost = 1f;
+        private float navigationOffRoadCost = 4f;
         private PixelPerfectCameraConfig pixelPerfectCameraConfig =
             PixelPerfectCameraConfig.disabled();
         private String initialMap = "defaultMap";
@@ -164,6 +178,19 @@ public final class WorldloomConfig {
             return this;
         }
 
+        /** 指定某张地图中用于降低寻路代价的道路瓦片层。 */
+        public Builder navigationRoadLayer(String mapName, String layerName) {
+            navigationRoadLayers.put(mapName, layerName);
+            return this;
+        }
+
+        /** 设置道路与非道路区域的相对寻路代价。 */
+        public Builder navigationCosts(float roadCost, float offRoadCost) {
+            navigationRoadCost = roadCost;
+            navigationOffRoadCost = offRoadCost;
+            return this;
+        }
+
         @SafeVarargs
         public final Builder autoComponents(Class<? extends Component>... componentTypes) {
             autoComponents.clear();
@@ -177,6 +204,11 @@ public final class WorldloomConfig {
             }
             if (uiZoom <= 0f || cameraZoom <= 0f || worldScale <= 0f) {
                 throw new IllegalStateException("zoom and world scale must be positive");
+            }
+            if (navigationRoadCost <= 0f
+                || navigationOffRoadCost < navigationRoadCost) {
+                throw new IllegalStateException(
+                    "navigation costs must satisfy 0 < road cost <= off-road cost");
             }
             if (initialMap == null || initialMap.isBlank()) {
                 throw new IllegalStateException("initial map cannot be blank");
