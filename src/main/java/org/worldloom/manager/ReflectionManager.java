@@ -5,6 +5,7 @@ import org.worldloom.Worldloom;
 import org.reflections.Reflections;
 import org.reflections.scanners.Scanners;
 import org.reflections.util.ConfigurationBuilder;
+import org.reflections.util.FilterBuilder;
 
 import java.lang.reflect.Constructor;
 import java.net.URL;
@@ -71,7 +72,7 @@ public class ReflectionManager {
         Map.Entry<Class, Class> key = new AbstractMap.SimpleImmutableEntry<>(ROOT_CLASS_GAME, type);
         Set result = subTypesCache.get(key);
         if (result == null) {
-            result = getReflections(ROOT_CLASS_GAME).getSubTypesOf(type);
+            result = getScopedSubTypes(ROOT_CLASS_GAME, type);
             subTypesCache.put(key, result);
         }
         return result;
@@ -81,9 +82,19 @@ public class ReflectionManager {
         Map.Entry<Class, Class> key = new AbstractMap.SimpleImmutableEntry<>(ROOT_CLASS_ENGINE, type);
         Set result = subTypesCache.get(key);
         if (result == null) {
-            result = getReflections(ROOT_CLASS_ENGINE).getSubTypesOf(type);
+            result = getScopedSubTypes(ROOT_CLASS_ENGINE, type);
             subTypesCache.put(key, result);
         }
+        return result;
+    }
+
+    private <T> Set<Class<? extends T>> getScopedSubTypes(Class<?> rootClass, Class<T> type) {
+        String rootPackage = rootClass.getPackageName();
+        Set<Class<? extends T>> result = new java.util.HashSet<>(getReflections(rootClass).getSubTypesOf(type));
+        // Reflections expands external ancestors so game classes inheriting engine
+        // components are still found. Do not expose those ancestors as game classes.
+        result.removeIf(candidate -> !candidate.getPackageName().equals(rootPackage)
+            && !candidate.getPackageName().startsWith(rootPackage + "."));
         return result;
     }
 
@@ -93,6 +104,10 @@ public class ReflectionManager {
             URL codeSource = k.getProtectionDomain().getCodeSource().getLocation();
             return new Reflections(new ConfigurationBuilder()
                     .addUrls(codeSource)
+                    // A shared IDE output can retain legacy or unrelated packages.
+                    // Scope the scan to the root package and its descendants, with
+                    // an exact package boundary (com.game must not match com.gameextra).
+                    .filterInputsBy(new FilterBuilder().includePackage(k.getPackageName()))
                     .setScanners(
                             // 扫描所有子类型
                             Scanners.SubTypes.filterResultsBy(s -> true),
