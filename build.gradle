@@ -30,6 +30,10 @@ tasks.withType(JavaCompile).configureEach {
 dependencies {
     testImplementation platform('org.junit:junit-bom:5.10.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
+    // Native physics only; tests never create a desktop application or window.
+    testRuntimeOnly "com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-desktop"
+    testRuntimeOnly "com.badlogicgames.gdx:gdx-box2d-platform:$gdxVersion:natives-desktop"
 
     //libgdx
     implementation "com.badlogicgames.gdx:gdx:$gdxVersion"

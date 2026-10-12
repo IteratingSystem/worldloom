@@ -5,6 +5,7 @@ import com.badlogic.gdx.math.Vector2;
 import org.worldloom.component.parent.SerializeComponent;
 import org.worldloom.serialize.SerializeParam;
 import org.worldloom.serialize.data.EntityDatum;
+import org.worldloom.serialize.data.CompMirror;
 
 
 /**
@@ -22,7 +23,14 @@ public class Pos extends SerializeComponent {
     public void reload(World world, EntityDatum entityDatum) {
         super.reload(world, entityDatum);
 
-        set((float)mapObject.getProperties().get("x"), (float)mapObject.getProperties().get("y"));
+        // Map templates have empty mirrors; saved entities and spawned items supply coordinates.
+        CompMirror position = entityDatum.hasComp("Pos") ? entityDatum.getCompMirror("Pos") : null;
+        if (position == null || !(position.getValue("x") instanceof Number)) {
+            x = mapObject == null ? 0f : ((Number) mapObject.getProperties().get("x", 0f, Number.class)).floatValue();
+        }
+        if (position == null || !(position.getValue("y") instanceof Number)) {
+            y = mapObject == null ? 0f : ((Number) mapObject.getProperties().get("y", 0f, Number.class)).floatValue();
+        }
     }
 
     /**

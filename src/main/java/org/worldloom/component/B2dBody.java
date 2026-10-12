@@ -44,6 +44,9 @@ public class B2dBody extends SerializeComponent implements Disposable {
     public boolean defFixed;//是否固定旋转
     @SerializeParam
     public float linearDamping;//线性阻尼
+    /** Saved physical heading in radians; old saves default to zero. */
+    @SerializeParam
+    public float angle;
 
 
     public Bag<FixtureSetup> keyframeFixSetups;
@@ -78,10 +81,10 @@ public class B2dBody extends SerializeComponent implements Disposable {
         MapProperties props = mapObject.getProperties();
         float posX = props.get("x", float.class);
         float posY = props.get("y", float.class);
-        CompMirror pos = entityDatum.getCompJson("Pos");
-        if (pos.containsKeys(new String[]{"x","y"})) {
-            posX = (float)pos.getValue("x", -1f);
-            posY = (float)pos.getValue("y", -1f);
+        CompMirror pos = entityDatum.hasComp("Pos") ? entityDatum.getCompMirror("Pos") : null;
+        if (pos != null) {
+            if (pos.getValue("x") instanceof Number x) posX = x.floatValue();
+            if (pos.getValue("y") instanceof Number y) posY = y.floatValue();
         }
 
 
@@ -95,6 +98,7 @@ public class B2dBody extends SerializeComponent implements Disposable {
         bodyDef = new BodyDef();
         bodyDef.fixedRotation = defFixed;
         bodyDef.type = defType;
+        bodyDef.angle = Float.isFinite(angle) ? angle : 0f;
         keyframeFixSetups = new Bag<>();
 
         float worldScale = Worldloom.config().getWorldScale();
@@ -325,6 +329,9 @@ public class B2dBody extends SerializeComponent implements Disposable {
         Array.ArrayIterator<Contact> iterator = new Array.ArrayIterator<>(b2dWorld.getContactList());
         while (iterator.hasNext()) {
             Contact contact = iterator.next();
+            if (!contact.isTouching()) {
+                continue;
+            }
             Fixture fixtureA = contact.getFixtureA();
             Fixture fixtureB = contact.getFixtureB();
 
@@ -392,5 +399,10 @@ public class B2dBody extends SerializeComponent implements Disposable {
     public void setPos(Pos pos) {
         float worldScale = Worldloom.config().getWorldScale();
         body.setTransform(worldScale*pos.x, worldScale*pos.y, body.getAngle());
+    }
+
+    @Override
+    public void beforeSerialization() {
+        if (body != null) angle = body.getAngle();
     }
 }

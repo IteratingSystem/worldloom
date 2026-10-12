@@ -951,6 +951,19 @@ WorldloomEngine engine = Worldloom.engineBuilder()
 
 读档的正确含义是“先用 JSON 替换会话状态，再创建新的 ECS World”。不要先创建 World 再调用 `loadSaveJson`，否则地图系统已经按旧状态初始化。
 
+本地未发布的存档修复（基于 4.2.8）：
+
+- `Pos` 优先使用镜像中明确提供的 `x/y`，缺少某一轴时才回退到 Tiled 坐标。这也适用于运行时修改过坐标的地图模板、掉落物和预制体；零坐标有效。
+- `B2dBody.angle` 保存物理角度（弧度），重建 Body 时恢复。旧存档缺少角度时仍为零。
+- `User.id` / `Owner.id` 使用 `@SerializeParam @EntityReference`。批量重建先分配所有实体 ID 和 Tag，再把存档引用映射为新 ID，因此支持指向列表后方实体的引用。无法恢复的引用设为 `-1`，不会误指向复用了旧 ID 的实体。
+- 引用属性还保存可选的 `entityReferenceTag`，用于恢复指向 Portal 携带实体的引用。旧存档没有该 Tag 时仅能恢复同一批次内的引用；跨地图遗留引用需由游戏按业务身份迁移。自定义整数实体引用也可使用此注解，其他整数属性不受影响。
+- `EntitySerializer.buildEntity` / `buildEntities` 不再覆盖输入快照的 `entityId`。单个模板实例化保留调用方提供的运行时引用；完整快照的引用重映射应使用 `buildEntities`。
+- 状态机恢复只设置当前状态，不自动调用 `enter`。需要恢复的 UI、相机、输入或物理激活状态应由游戏在所有实体构建完成后协调，避免对尚未初始化的其他组件产生依赖。
+
+`B2dBody.getContactFixtures` 只返回 `Contact.isTouching()` 为真的实际接触；Box2D broadphase 保留的近邻候选不算交互接触。
+
+无窗口回归检查：`./gradlew test`。`EntityRestoreTest` 仅使用 ECS、原生 Box2D 和模拟纹理，不创建桌面后端或游戏窗口。
+
 ### 15.4 保存自定义系统字段
 
 ```java

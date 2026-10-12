@@ -17,6 +17,8 @@ import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.util.Set;
+import java.util.Map;
+import java.util.HashMap;
 
 /**
  * @Auther WenLong
@@ -167,6 +169,10 @@ public class EntitySerializer {
                 prop.key = key;
                 prop.value = value;
                 prop.type = type.getName();
+                if (field.isAnnotationPresent(EntityReference.class) && value instanceof Number reference
+                    && reference.intValue() >= 0) {
+                    prop.entityReferenceTag = tagManager.getTag(reference.intValue());
+                }
 
                 compMirror.properties.add(prop);
             }
@@ -192,14 +198,29 @@ public class EntitySerializer {
 
     @SuppressWarnings("unchecked")
     public static int buildEntity(World world, EntityDatum entityDatum) {
-        TagManager tagManager = world.getSystem(TagManager.class);
-        int entityId = world.create();
-        entityDatum.entityId = entityId;
+        EntityDatum runtime = allocateEntity(world, entityDatum);
+        restoreComponents(world, runtime, null);
+        return runtime.entityId;
+    }
 
-        // 注册 tag
-        if (!"".equals(entityDatum.name)) {
-            tagManager.register(entityDatum.name, entityId);
+    private static EntityDatum allocateEntity(World world, EntityDatum source) {
+        EntityDatum runtime = new EntityDatum();
+        runtime.entityId = world.create();
+        runtime.dataFrom = source.dataFrom;
+        runtime.fromMap = source.fromMap;
+        runtime.mapObjectId = source.mapObjectId;
+        runtime.name = source.name;
+        runtime.type = source.type;
+        runtime.compMirrors = source.compMirrors;
+        if (runtime.name != null && !runtime.name.isEmpty()) {
+            world.getSystem(TagManager.class).register(runtime.name, runtime.entityId);
         }
+        return runtime;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void restoreComponents(World world, EntityDatum entityDatum, Map<Integer, Integer> restoredIds) {
+        int entityId = entityDatum.entityId;
 
         Array<CompMirror> components = entityDatum.compMirrors;
         ReflectionManager reflectionManager = ReflectionManager.getInstance();
@@ -241,6 +262,16 @@ public class EntitySerializer {
                         field.setAccessible(true); // 允许访问私有字段
 
                         Class<?> type = field.getType();
+                        if (restoredIds != null && entityDatum.dataFrom == EntityData.FROM_WORLD
+                            && field.isAnnotationPresent(EntityReference.class)) {
+                            if (type != int.class) {
+                                throw new IllegalArgumentException("EntityReference must annotate an int: " + field);
+                            }
+                            int oldId = ((Number) coerceType(value, int.class)).intValue();
+                            int taggedId = prop.entityReferenceTag == null ? -1
+                                : world.getSystem(TagManager.class).getEntityId(prop.entityReferenceTag);
+                            value = oldId < 0 ? -1 : taggedId >= 0 ? taggedId : restoredIds.getOrDefault(oldId, -1);
+                        }
                         if (type.isEnum()) {
                             // 假设 value 为 String（枚举名称）或 Number（枚举序数）
                             if (value instanceof String) {
@@ -316,7 +347,6 @@ public class EntitySerializer {
                 }
             }
         }
-        return entityId;
     }
 
     /**
@@ -401,8 +431,18 @@ public class EntitySerializer {
         if (entityData == null) {
             return;
         }
-        for (EntityDatum entityDatum : entityData) {
-            buildEntity(world,entityDatum);
+        Map<Integer, Integer> restoredIds = new HashMap<>();
+        Array<EntityDatum> runtime = new Array<>(entityData.size);
+        for (EntityDatum saved : entityData) {
+            EntityDatum allocated = allocateEntity(world, saved);
+            runtime.add(allocated);
+            if (saved.dataFrom == EntityData.FROM_WORLD) {
+                restoredIds.put(saved.entityId, allocated.entityId);
+            }
+        }
+        // All IDs and tags exist before resolving forward references. Source snapshots stay immutable.
+        for (EntityDatum allocated : runtime) {
+            restoreComponents(world, allocated, restoredIds);
         }
     }
     public static String toJson(EntityData entityData){

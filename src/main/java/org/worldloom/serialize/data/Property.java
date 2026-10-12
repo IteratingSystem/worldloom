@@ -9,4 +9,6 @@ public class Property {
     public String key;
     public String type;
     public Object value;
+    /** Stable fallback for @EntityReference fields whose target is carried across maps. */
+    public String entityReferenceTag;
 }
