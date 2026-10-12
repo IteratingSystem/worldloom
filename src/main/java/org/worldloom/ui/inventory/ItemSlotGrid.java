@@ -285,8 +285,8 @@ public class ItemSlotGrid extends BaseEcsUI {
         targetInvUI.rebuild();
     }
 
-    // Both sides must accept an exchange. Checking only the destination lets
-    // dragging equipment onto a material stack put that material into its slot.
+    // 交换物品时必须校验双方是否接受，若仅校验目标槽，
+    // 将装备拖到材料堆上就可能把材料反向放入装备槽。
     private static boolean canTransfer(ItemSlot from, ItemSlot to, boolean exchange) {
         if (from == null || to == null || from == to || from.isDisabled()
             || to.isDisabled() || from.getInvUI() == null || to.getInvUI() == null) return false;

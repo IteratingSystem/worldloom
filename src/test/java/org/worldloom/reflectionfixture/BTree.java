@@ -3,7 +3,7 @@ package org.worldloom.reflectionfixture;
 import com.artemis.Component;
 import org.worldloom.serialize.SerializeParam;
 
-/** Legal game component sharing its simple name with a stale legacy class. */
+/** 合法的游戏组件，与残留旧类具有相同的简单类名。 */
 public class BTree extends Component {
     @SerializeParam public String treeName;
 }

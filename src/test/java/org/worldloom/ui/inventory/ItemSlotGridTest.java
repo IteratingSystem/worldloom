@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
-/** Exercises the real transfer methods without constructing a Scene2D UI or GL backend. */
+/** 直接验证真实物品转移方法，不创建 Scene2D 界面或 GL 后端。 */
 class ItemSlotGridTest {
     private enum Type { SWORD, WOOD, ARROW }
 

@@ -17,7 +17,7 @@ import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** All fixture packages share one code-source URL, as in a stale IDE build output. */
+/** 所有测试夹具包共用一个代码来源地址，模拟 IDE 编译输出中的旧类残留。 */
 class ReflectionScopeTest {
     private Object previousRoot;
     private ReflectionManager reflections;

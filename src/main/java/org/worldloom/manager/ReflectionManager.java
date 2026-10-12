@@ -91,8 +91,8 @@ public class ReflectionManager {
     private <T> Set<Class<? extends T>> getScopedSubTypes(Class<?> rootClass, Class<T> type) {
         String rootPackage = rootClass.getPackageName();
         Set<Class<? extends T>> result = new java.util.HashSet<>(getReflections(rootClass).getSubTypesOf(type));
-        // Reflections expands external ancestors so game classes inheriting engine
-        // components are still found. Do not expose those ancestors as game classes.
+        // Reflections 会扩展外部父类，以便发现继承引擎组件的游戏类。
+        // 查询结果不能将这些外部父类作为游戏包内的类返回。
         result.removeIf(candidate -> !candidate.getPackageName().equals(rootPackage)
             && !candidate.getPackageName().startsWith(rootPackage + "."));
         return result;
@@ -104,9 +104,9 @@ public class ReflectionManager {
             URL codeSource = k.getProtectionDomain().getCodeSource().getLocation();
             return new Reflections(new ConfigurationBuilder()
                     .addUrls(codeSource)
-                    // A shared IDE output can retain legacy or unrelated packages.
-                    // Scope the scan to the root package and its descendants, with
-                    // an exact package boundary (com.game must not match com.gameextra).
+                    // 共享的 IDE 编译输出中可能残留旧版本或无关包中的类。
+                    // 扫描仅限于根包及其子包，并严格匹配包名边界，
+                    // 例如 com.game 不能匹配 com.gameextra。
                     .filterInputsBy(new FilterBuilder().includePackage(k.getPackageName()))
                     .setScanners(
                             // 扫描所有子类型
