@@ -36,11 +36,12 @@ Island 通过 `worldloomVersion` 固定依赖某个已发布的引擎版本。�
 ## 4. 发布步骤
 
 1. 完成代码和文档修改，并在 Worldloom 中运行测试。
-2. 在 Island 中更新依赖并完成实际运行测试。
-3. 根据变化范围修改 Worldloom 的 `gradle.properties` 中的 `worldloomVersion`。
-4. 使用中文提交说明，例如 `发布 Worldloom 4.1.0`，并在提交正文中写明主要变化。
-5. 推送 `main`。GitHub Actions 会创建同名标签和 Release。
-6. 标签发布后不删除、不移动；发现问题时发布下一个修订版本。
+2. 根据变化范围修改 Worldloom 的 `gradle.properties` 中的 `worldloomVersion`。发布前可通过显式参数在 Island 联合编译检查，不将本机源码路径设为游戏默认依赖。
+3. 使用中文提交说明，例如 `发布 Worldloom 4.2.9`，并在提交正文中写明主要变化。
+4. 推送引擎 `main`，现有 GitHub Actions 会创建同名标签和 Release。遵守项目的推送授权约定，不将发布准备视为自动推送授权。
+5. 确认 JitPack 已成功构建该标签且对应版本产物可获取，再更新并交付 Island 的 `worldloomVersion`。游戏默认拉取该二进制版本，不要求用户检出引擎源码。
+6. 在 Island 验证远程依赖解析和编译；实际运行验收由用户安排，不自动启动游戏。未发布的版本必须明确标注待发布，不能用本地源码检查代替远程产物验证。
+7. 标签发布后不删除、不移动；发现问题时发布下一个修订版本。
 
 版本号未变化时，GitHub Actions 会跳过发布，不会覆盖已有标签和 Release。
 

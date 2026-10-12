@@ -4,7 +4,7 @@ Worldloom 是基于 LibGDX、Artemis-ODB 和 Tiled 的嵌入式 2D ECS 游戏引
 
 Worldloom 不接管 LibGDX 的 `ApplicationListener` 或 `Screen`。游戏项目仍然拥有平台启动、页面和业务内容；引擎通过 `WorldloomEngine` 统一管理 ECS World 的创建、系统顺序、每帧更新、窗口变化和释放。
 
-当前版本：`4.2.4`。版本号的选择与发布步骤见 [VERSIONING.md](VERSIONING.md)。
+当前源码版本：`4.2.9`。版本号的选择与发布步骤见 [VERSIONING.md](VERSIONING.md)。
 
 ## 1. 环境与依赖
 
@@ -23,7 +23,7 @@ repositories {
 }
 
 dependencies {
-    api "com.github.IteratingSystem:worldloom:4.2.4"
+    api "com.github.IteratingSystem:worldloom:4.2.9"
 }
 ```
 
