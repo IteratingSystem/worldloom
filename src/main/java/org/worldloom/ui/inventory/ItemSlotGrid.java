@@ -211,8 +211,10 @@ public class ItemSlotGrid extends BaseEcsUI {
             return;
         }
 
-        ItemSlot fromSlot = (ItemSlot)source.getActor();
-        ItemSlot targetSlot = (ItemSlot)targetActor;
+        if (source == null || !(source.getActor() instanceof ItemSlot fromSlot)
+            || !(targetActor instanceof ItemSlot targetSlot)) {
+            return;
+        }
         //不允许自己拖拽到自己
         if (fromSlot == targetSlot){
             return;
@@ -221,8 +223,11 @@ public class ItemSlotGrid extends BaseEcsUI {
 
         SlotDatum fromDatum = fromSlot.getSlotDatum();
         SlotDatum targetDatum = targetSlot.getSlotDatum();
+        if (!canTransfer(fromSlot, targetSlot, false)) {
+            return;
+        }
         //同一种物品需要合并
-        if (fromDatum.itemId == targetDatum.itemId) {
+        if (!isEmpty(targetDatum) && fromDatum.itemId == targetDatum.itemId) {
             merge(fromSlot,targetSlot);
             return;
         }
@@ -233,9 +238,11 @@ public class ItemSlotGrid extends BaseEcsUI {
 
     /** 合并数据 **/
     public void merge(ItemSlot fromSlot,ItemSlot targetSlot){
+        if (!canTransfer(fromSlot, targetSlot, false)) return;
         SlotDatum fromDatum = fromSlot.getSlotDatum();
         SlotDatum targetDatum = targetSlot.getSlotDatum();
-        if (targetDatum.stackAmount == targetDatum.maxStack) {
+        if (isEmpty(targetDatum) || fromDatum.itemId != targetDatum.itemId
+            || targetDatum.stackAmount >= targetDatum.maxStack) {
             exchangeData(fromSlot,targetSlot);
             return;
         }
@@ -259,6 +266,7 @@ public class ItemSlotGrid extends BaseEcsUI {
     }
     /** 交换数据 **/
     public void exchangeData(ItemSlot fromSlot,ItemSlot targetSlot){
+        if (!canTransfer(fromSlot, targetSlot, true)) return;
         SlotDatum fromDatum = fromSlot.getSlotDatum();
         SlotDatum targetDatum = targetSlot.getSlotDatum();
         SlotDatum swapDatum = fromDatum;
@@ -275,5 +283,25 @@ public class ItemSlotGrid extends BaseEcsUI {
 
         fromInvUI.rebuild();
         targetInvUI.rebuild();
+    }
+
+    // Both sides must accept an exchange. Checking only the destination lets
+    // dragging equipment onto a material stack put that material into its slot.
+    private static boolean canTransfer(ItemSlot from, ItemSlot to, boolean exchange) {
+        if (from == null || to == null || from == to || from.isDisabled()
+            || to.isDisabled() || from.getInvUI() == null || to.getInvUI() == null) return false;
+        SlotDatum source = from.getSlotDatum();
+        return !isEmpty(source) && accepts(to, source)
+            && (!exchange || accepts(from, to.getSlotDatum()));
+    }
+
+    private static boolean accepts(ItemSlot slot, SlotDatum datum) {
+        if (isEmpty(datum)) return true;
+        Bag<Enum<?>> types = slot.getAcceptTypes();
+        return types == null || types.isEmpty() || types.contains(datum.itemType);
+    }
+
+    private static boolean isEmpty(SlotDatum datum) {
+        return datum == null || datum.stackAmount <= 0;
     }
 }
