@@ -220,6 +220,13 @@ AssetManager.getInstance().dispose();
 
 `assets.txt` 必须在打包前由资源模块生成。不要使用 `FileHandle.list()` 扫描 jar 内资源；它在桌面开发目录中可能可用，但打包为 jar 后不可靠。
 
+清单在 `AssetManager` 创建时统一解析：支持 LF/CRLF 换行，去掉行首尾空白与 UTF-8 BOM，
+忽略空行，并把反斜杠转为 `/`。`loadAssets()`、`getObjects()` 和公开的 `assetPathList`
+共用这一份规范化快照，地图、行为树、Shader 和游戏侧部件索引使用相同路径。
+运行期间修改清单不会改变已经加载的资源索引；更新清单后需重启应用以重新读取。
+不要修改 `assetPathList` 内容，也不要依赖清单原始换行符。`AssetManifestTest` 无窗口验证
+清单格式及 `AssetManager → MapManager → getPhyLayer` 的五图注册链。
+
 单独加载和读取资源：
 
 ```java

@@ -17,6 +17,7 @@ import com.bladecoder.ink.runtime.Story;
 import org.worldloom.loader.EcsMapLoader;
 import org.worldloom.loader.InkStoryLoader;
 import org.worldloom.audio.AudioAssetPath;
+import java.util.ArrayList;
 
 
 /**
@@ -35,19 +36,29 @@ public class AssetManager {
     public static final String MUSIC_DIR = AudioAssetPath.MUSIC_DIRECTORY;
     private static AssetManager instance;
     private static FileHandleResolver resolver;
-    private FileHandle assetsHandle;
-    public String[] assetPathList;
+    /** Canonical manifest snapshot shared by loading, discovery and shader/part indexes. */
+    public String[] assetPathList = new String[0];
     private static com.badlogic.gdx.assets.AssetManager gdxAssetManager;
 
     private AssetManager() {
         // 私有构造器，防止外部直接实例化
-        assetsHandle = Gdx.files.internal("assets.txt");
+        FileHandle assetsHandle = Gdx.files.internal("assets.txt");
         if (!assetsHandle.exists()) {
             Gdx.app.error(TAG,"assets.txt is not exists!");
             return;
         }
-        String assetsPath = assetsHandle.readString();
-        assetPathList = assetsPath.split("\n");
+        assetPathList = parseAssetPaths(assetsHandle.readString());
+    }
+
+    private static String[] parseAssetPaths(String manifest) {
+        ArrayList<String> paths = new ArrayList<>();
+        for (String line : manifest.split("\\R")) {
+            String path = line.trim();
+            if (path.startsWith("\uFEFF")) path = path.substring(1).trim();
+            path = path.replace('\\', '/');
+            if (!path.isEmpty()) paths.add(path);
+        }
+        return paths.toArray(String[]::new);
     }
     private static void initialize(){
         resolver = new InternalFileHandleResolver();
@@ -97,10 +108,6 @@ public class AssetManager {
      */
     public void loadAssets() {
         for (String path : assetPathList) {
-            path = path.trim().replace('\\', '/');
-            if (path.isEmpty()) {
-                continue;
-            }
             if (path.startsWith(SOUND_DIR) && isAudioPath(path)) {
                 loadAsset(path, Sound.class);
                 continue;
@@ -157,15 +164,9 @@ public class AssetManager {
      * @param <T>
      */
     public <T> ObjectMap<String, T> getObjects(String ext,Class<T> aClass) {
-        if (!assetsHandle.exists()) {
-            Gdx.app.error(TAG,"assets.txt is not exists!");
-            return null;
-        }
-        String assetsPath = assetsHandle.readString();
-        String[] assetPath = assetsPath.split("\n");
         ObjectMap<String, T> objectMap = new ObjectMap<>();
         FileHandle fileHandle;
-        for (String path : assetPath) {
+        for (String path : assetPathList) {
             if (path.endsWith(ext)) {
                 fileHandle = Gdx.files.internal(path);
                 if (!fileHandle.exists()){
