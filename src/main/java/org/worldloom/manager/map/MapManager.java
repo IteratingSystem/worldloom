@@ -51,7 +51,7 @@ public class MapManager {
             String[] hiddenLayers = hiddenLayerNames.get(mapName);
             if (hiddenLayers != null) {
                 for (String layerName : hiddenLayers) {
-                    TiledMapTileLayer layer = (TiledMapTileLayer)tiledMap.getLayers().get(layerName);
+                    MapLayer layer = tiledMap.getLayers().get(layerName);
                     if (layer == null) {
                         Gdx.app.error(TAG, "Hidden layer is missing: "
                             + mapName + "/" + layerName);
@@ -77,9 +77,6 @@ public class MapManager {
                 tileSets.add(tileSet);
             }
         }
-    }
-    public static synchronized void init(ObjectMap<String, String> entityLayerNames,ObjectMap<String, String[]> phyLayerNames){
-        init(entityLayerNames, phyLayerNames, new ObjectMap<>());
     }
 
     /** 初始化地图，并按 hiddenLayerNames 隐藏普通渲染层；显式采样仍可读取瓦片。 */

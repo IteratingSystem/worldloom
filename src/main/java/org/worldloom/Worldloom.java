@@ -34,7 +34,7 @@ public final class Worldloom {
     /** 资源加载完成后，根据配置建立地图和实体原型。 */
     public static void initializeMaps() {
         WorldloomConfig current = config();
-        MapManager.init(current.getEntityLayers(), current.getPhysicsLayers());
+        MapManager.init(current.getEntityLayers(), current.getPhysicsLayers(),current.getHiddenLayers());
     }
 
     /** 从 Tiled 地图原型建立新会话。 */
