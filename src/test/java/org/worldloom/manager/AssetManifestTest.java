@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.worldloom.manager.map.MapManager;
+import org.worldloom.WorldloomConfig;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
@@ -125,6 +126,39 @@ class AssetManifestTest {
             assertEquals("SEA_PHY", layers[0].getName());
             assertEquals("BRIDGE", layers[1].getName());
         }
+    }
+
+    @Test void configuredHiddenLayer_hidesOnlyNamedMapLayer() throws Exception {
+        TiledMap island = new TiledMap();
+        MapLayer islandEntities = new MapLayer(); islandEntities.setName("ENTITY");
+        MapLayer islandSea = new MapLayer(); islandSea.setName("SEA");
+        island.getLayers().add(islandEntities);
+        island.getLayers().add(islandSea);
+        TiledMap house = new TiledMap();
+        MapLayer houseEntities = new MapLayer(); houseEntities.setName("ENTITY");
+        MapLayer houseSea = new MapLayer(); houseSea.setName("SEA");
+        house.getLayers().add(houseEntities);
+        house.getLayers().add(houseSea);
+        when(backing.get("tiled/island.tmx", TiledMap.class)).thenReturn(island);
+        when(backing.get("tiled/house.tmx", TiledMap.class)).thenReturn(house);
+        AssetManager assets = manager("tiled/island.tmx\ntiled/house.tmx\n");
+        assets.loadAssets();
+        WorldloomConfig config = WorldloomConfig.builder()
+            .entityLayer("island", "ENTITY")
+            .entityLayer("house", "ENTITY")
+            .hiddenLayers("island", "SEA")
+            .build();
+        ObjectMap<String, String[]> exposed = config.getHiddenLayers();
+        exposed.get("island")[0] = "ENTITY";
+
+        MapManager.init(config.getEntityLayers(), config.getPhysicsLayers(),
+            config.getHiddenLayers());
+
+        assertFalse(islandSea.isVisible());
+        assertTrue(islandEntities.isVisible());
+        assertTrue(houseSea.isVisible());
+        assertSame(islandSea, MapManager.getInstance().getTiledMap("island")
+            .getLayers().get("SEA"));
     }
 
     private AssetManager manager(String text) throws Exception {

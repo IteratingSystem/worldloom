@@ -35,7 +35,9 @@ public class MapManager {
     private Bag<TiledMapTileSet> tileSets;
 
 
-    private MapManager(ObjectMap<String, String> entityLayerNames,ObjectMap<String, String[]> phyLayerNames){
+    private MapManager(ObjectMap<String, String> entityLayerNames,
+                       ObjectMap<String, String[]> phyLayerNames,
+                       ObjectMap<String, String[]> hiddenLayerNames){
         this.entityLayerNames = entityLayerNames;
         this.phyLayerNames = phyLayerNames;
         allMaps = AssetManager.getInstance().getObjects(EXT,TiledMap.class);
@@ -46,6 +48,18 @@ public class MapManager {
         for (String mapName : mapKeys) {
             TiledMap tiledMap = getTiledMap(mapName);
             fillSplit(tiledMap);
+            String[] hiddenLayers = hiddenLayerNames.get(mapName);
+            if (hiddenLayers != null) {
+                for (String layerName : hiddenLayers) {
+                    MapLayer layer = tiledMap.getLayers().get(layerName);
+                    if (layer == null) {
+                        Gdx.app.error(TAG, "Hidden layer is missing: "
+                            + mapName + "/" + layerName);
+                        continue;
+                    }
+                    layer.setVisible(false);
+                }
+            }
 
             if (!entityLayerNames.containsKey(mapName)) {
                 Gdx.app.debug(TAG,"Failed to get map entity,Not set 'entityLayerNames' with tiled map,map name: "+mapName);
@@ -65,10 +79,16 @@ public class MapManager {
         }
     }
     public static synchronized void init(ObjectMap<String, String> entityLayerNames,ObjectMap<String, String[]> phyLayerNames){
+        init(entityLayerNames, phyLayerNames, new ObjectMap<>());
+    }
+    /** 初始化地图，并按 hiddenLayerNames 隐藏普通渲染层；显式采样仍可读取瓦片。 */
+    public static synchronized void init(ObjectMap<String, String> entityLayerNames,
+                                         ObjectMap<String, String[]> phyLayerNames,
+                                         ObjectMap<String, String[]> hiddenLayerNames){
         if (instance != null){
             return;
         }
-        instance = new MapManager(entityLayerNames,phyLayerNames);
+        instance = new MapManager(entityLayerNames, phyLayerNames, hiddenLayerNames);
     }
     public static MapManager getInstance(){
         if (instance == null) {

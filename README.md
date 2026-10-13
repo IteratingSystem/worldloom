@@ -80,6 +80,7 @@ WorldloomConfig config = WorldloomConfig.builder()
     .skin("skin/main.json")
     .entityLayer("island", "entities")
     .physicsLayers("island", "ground", "wall")
+    .hiddenLayers("island", "WATER")
     .build();
 
 Worldloom.configure(config);
@@ -187,6 +188,7 @@ AssetManager.getInstance().dispose();
 | `skin("skin/main.json")` | `skin/main.json` | Scene2D Skin 路径 |
 | `entityLayer(map, layer)` | 空 | 每张地图的实体对象层 |
 | `physicsLayers(map, layers...)` | 空 | 每张地图的静态物理层 |
+| `hiddenLayers(map, layers...)` | 空 | 加载后不由普通地图渲染器绘制的图层；瓦片数据仍可供系统读取 |
 | `autoComponents(...)` | `Pos/Render/ZIndex` | 地图对象默认创建的组件 |
 
 游戏模块只能注册到以下稳定阶段，引擎内部系统顺序不向游戏项目开放：
@@ -571,7 +573,7 @@ WorldloomEngine engine = Worldloom.engineBuilder()
     .build();
 ```
 
-对应 Tiled 图层可以保持隐藏，`ShaderTileLayerRenderSystem` 会直接绘制摄像机范围内的瓦片，并保留 Tiled 动画。系统由引擎固定安排在普通地图与实体批次之间；游戏项目不应再次注册该系统。`TileLayerShaderUniforms.initialize` 适合缓存资源，`dispose` 用于释放实现类自行创建的资源。辅助纹理由 AssetManager 持有时不要重复释放。
+对应 Tiled 图层可保持显示以方便编辑，并用 `WorldloomConfig.builder().hiddenLayers("island", "WATER")` 在游戏加载时关闭普通地图层绘制。`ShaderTileLayerRenderSystem` 仍会直接绘制摄像机范围内的该图层瓦片并保留 Tiled 动画；隐藏配置不会删除瓦片或禁止显式采样。系统由引擎固定安排在普通地图与实体批次之间；游戏项目不应再次注册该系统。`TileLayerShaderUniforms.initialize` 适合缓存资源，`dispose` 用于释放实现类自行创建的资源。辅助纹理由 AssetManager 持有时不要重复释放。
 
 瓦片层顶点 Shader 应从 `a_position.xy` 传出世界坐标，不能用单块瓦片的 `v_texCoords` 推导整张地图坐标。
 

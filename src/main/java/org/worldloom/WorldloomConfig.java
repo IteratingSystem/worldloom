@@ -16,6 +16,7 @@ import org.worldloom.component.ZIndex;
 public final class WorldloomConfig {
     private final ObjectMap<String, String> entityLayers;
     private final ObjectMap<String, String[]> physicsLayers;
+    private final ObjectMap<String, String[]> hiddenLayers;
     private final ObjectMap<String, String> navigationRoadLayers;
     private final Array<Class<? extends Component>> autoComponents;
     private final int uiWidth;
@@ -39,6 +40,7 @@ public final class WorldloomConfig {
     private WorldloomConfig(Builder builder) {
         entityLayers = copyStringMap(builder.entityLayers);
         physicsLayers = copyArrayMap(builder.physicsLayers);
+        hiddenLayers = copyArrayMap(builder.hiddenLayers);
         navigationRoadLayers = copyStringMap(builder.navigationRoadLayers);
         autoComponents = new Array<>(builder.autoComponents);
         uiWidth = builder.uiWidth;
@@ -64,6 +66,8 @@ public final class WorldloomConfig {
 
     public ObjectMap<String, String> getEntityLayers() { return copyStringMap(entityLayers); }
     public ObjectMap<String, String[]> getPhysicsLayers() { return copyArrayMap(physicsLayers); }
+    /** 返回隐藏层配置副本，例如交给地图系统后隐藏 island 的 SEA。 */
+    public ObjectMap<String, String[]> getHiddenLayers() { return copyArrayMap(hiddenLayers); }
     public ObjectMap<String, String> getNavigationRoadLayers() {
         return copyStringMap(navigationRoadLayers);
     }
@@ -105,6 +109,7 @@ public final class WorldloomConfig {
     public static final class Builder {
         private final ObjectMap<String, String> entityLayers = new ObjectMap<>();
         private final ObjectMap<String, String[]> physicsLayers = new ObjectMap<>();
+        private final ObjectMap<String, String[]> hiddenLayers = new ObjectMap<>();
         private final ObjectMap<String, String> navigationRoadLayers = new ObjectMap<>();
         private final Array<Class<? extends Component>> autoComponents = new Array<>();
         private int uiWidth = 640;
@@ -175,6 +180,12 @@ public final class WorldloomConfig {
 
         public Builder physicsLayers(String mapName, String... layerNames) {
             physicsLayers.put(mapName, layerNames.clone());
+            return this;
+        }
+
+        /** 例如 hiddenLayers("island", "SEA") 会在地图加载后隐藏普通渲染层。 */
+        public Builder hiddenLayers(String mapName, String... layerNames) {
+            hiddenLayers.put(mapName, layerNames.clone());
             return this;
         }
 

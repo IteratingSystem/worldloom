@@ -96,7 +96,8 @@ public final class ArtemisInstaller {
         builder.with(new TiledMapSystem(
             currentMap,
             config.getEntityLayers(),
-            config.getPhysicsLayers()));
+            config.getPhysicsLayers(),
+            config.getHiddenLayers()));
         builder.with(new B2dSystem(
             config.getGravityX(),
             config.getGravityY(),
