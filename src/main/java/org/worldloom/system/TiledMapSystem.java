@@ -18,7 +18,9 @@ public class TiledMapSystem extends BaseSystem {
     private RenderTiledSystem renderTiledSystem;
     private B2dSystem b2dSystem;
     private String current;
-    public TiledMapSystem(String mapName, ObjectMap<String, String> entityLayers,ObjectMap<String, String[]> phyLayers){
+
+    public TiledMapSystem(String mapName, ObjectMap<String, String> entityLayers,
+                          ObjectMap<String, String[]> phyLayers){
         this(mapName, entityLayers, phyLayers, new ObjectMap<>());
     }
     public TiledMapSystem(String mapName, ObjectMap<String, String> entityLayers,
