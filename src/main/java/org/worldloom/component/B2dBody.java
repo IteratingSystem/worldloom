@@ -115,6 +115,7 @@ public class B2dBody extends SerializeComponent implements Disposable {
         //动画帧中的形状对象
         MapManager mapManager = MapManager.getInstance();
         TiledMapTileSet tileSet = mapManager.getTileSet(tiledMapTile);
+        String group = TileAnimations.groupOf(tileSet, tiledMapTile);
         for (TiledMapTile aTile : tileSet) {
             if (!(aTile instanceof AnimatedTiledMapTile animatedTile)) {
                 continue;
@@ -125,6 +126,9 @@ public class B2dBody extends SerializeComponent implements Disposable {
             }
             MapProperties aniProp = allProps.get("TileAnimation", MapProperties.class);
             if (!aniProp.containsKey("name")) {
+                continue;
+            }
+            if (!group.equals(TileAnimations.groupOf(allProps))) {
                 continue;
             }
 

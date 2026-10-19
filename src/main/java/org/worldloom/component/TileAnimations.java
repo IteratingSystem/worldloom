@@ -8,6 +8,7 @@ import com.badlogic.gdx.maps.MapProperties;
 import com.badlogic.gdx.maps.tiled.TiledMapTile;
 import com.badlogic.gdx.maps.tiled.TiledMapTileSet;
 import com.badlogic.gdx.maps.tiled.tiles.AnimatedTiledMapTile;
+import com.badlogic.gdx.maps.tiled.tiles.StaticTiledMapTile;
 import com.badlogic.gdx.utils.ObjectMap;
 import org.worldloom.component.parent.SerializeComponent;
 import org.worldloom.manager.map.MapManager;
@@ -34,6 +35,7 @@ public class TileAnimations extends SerializeComponent {
 
         MapManager mapManager = MapManager.getInstance();
         TiledMapTileSet tileSet = mapManager.getTileSet(tiledMapTile);
+        String group = groupOf(tileSet, tiledMapTile);
         Iterator<TiledMapTile> tileSetItr = tileSet.iterator();
         while (tileSetItr.hasNext()){
             TiledMapTile tile = tileSetItr.next();
@@ -42,6 +44,9 @@ public class TileAnimations extends SerializeComponent {
             }
             MapProperties props = animatedTile.getProperties();
             if (!props.containsKey("TileAnimation")) {
+                continue;
+            }
+            if (!group.equals(groupOf(props))) {
                 continue;
             }
             MapProperties animProp = props.get("TileAnimation",MapProperties.class);
@@ -57,6 +62,49 @@ public class TileAnimations extends SerializeComponent {
             }
             table.put(name,tileAnimation);
         }
+    }
+
+    /**
+     * 读取瓦片动画属性里的角色分组，没有写分组时返回空字符串。
+     * 同一个 tileset 里放多个角色时，每个角色的动画瓦片写同一个 group，实体只会收集与自己同组的动画和碰撞形状。
+     *
+     * @param props 动画瓦片的属性
+     * @return 分组名，不分组为 ""
+     */
+    public static String groupOf(MapProperties props) {
+        if (props == null || !props.containsKey("TileAnimation")) {
+            return "";
+        }
+        MapProperties animProp = props.get("TileAnimation", MapProperties.class);
+        return animProp.get("group", "", String.class);
+    }
+
+    /**
+     * 解析实体所放置瓦片所属的角色分组：瓦片自带 TileAnimation 属性就取它的分组，
+     * 否则在 tileset 里找把它当作动画帧的动画瓦片，取那一个的分组。
+     *
+     * @param tileSet 瓦片所在 tileset
+     * @param tile    实体放置的瓦片，可为 null
+     * @return 分组名，不分组为 ""
+     */
+    public static String groupOf(TiledMapTileSet tileSet, TiledMapTile tile) {
+        if (tile == null) {
+            return "";
+        }
+        if (tile.getProperties().containsKey("TileAnimation")) {
+            return groupOf(tile.getProperties());
+        }
+        for (TiledMapTile other : tileSet) {
+            if (!(other instanceof AnimatedTiledMapTile animated) || !animated.getProperties().containsKey("TileAnimation")) {
+                continue;
+            }
+            for (StaticTiledMapTile frame : animated.getFrameTiles()) {
+                if (frame.getId() == tile.getId()) {
+                    return groupOf(animated.getProperties());
+                }
+            }
+        }
+        return "";
     }
 
     public TileAnimation getTileAnimation(){

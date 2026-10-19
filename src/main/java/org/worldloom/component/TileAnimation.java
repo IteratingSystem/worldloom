@@ -27,6 +27,9 @@ public class TileAnimation extends SerializeComponent {
     public float offsetX;
     @SerializeParam
     public float offsetY;
+    /** 角色分组：同一 tileset 放多个角色时，用它区分动画归属；空表示不分组 */
+    @SerializeParam
+    public String group = "";
 
     protected TextureRegion[] keyframes;
     //状态运行时间

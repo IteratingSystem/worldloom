@@ -316,7 +316,7 @@ public class Health extends SerializeComponent {
 | `BTree` | 通过 `treeName` 绑定 `.tree` 资源并以实体作为黑板对象 |
 | `NavigationAgent` | 导航系统按需创建的运行时路径状态，不需要在Tiled中挂载 |
 | `TileAnimation` | 单个 Tiled 动画，支持 LibGDX `Animation.PlayMode`、暂停和帧查询 |
-| `TileAnimations` | 从 tileset 收集多个具名动画，通过 `current` 切换 |
+| `TileAnimations` | 从 tileset 收集多个具名动画（可按 `group` 区分同 tileset 的多个角色），通过 `current` 切换 |
 | `LayerSampling` | 把某地图瓦片层采样为实体纹理，可跟随该层动画 |
 | `ShaderComp` | 为单个实体选择 `.vert`、`.frag` 和可选 uniform 处理类 |
 | `Portal` | 描述 `targetMap`、`targetPosEntity` 并发起跨地图迁移 |
@@ -373,6 +373,10 @@ TextureRegion frame = animations.getKeyFrame();
 boolean ending = animations.isLast(1);
 boolean finished = animations.isAnimationFinished();
 ```
+
+#### 多角色共用 tileset（`group`）
+
+多个角色合在一个 tileset 里时，给每个角色全部动画瓦片的 `TileAnimation` 填同一个 `group`（如 `slime_green`）。实体按放置瓦片所属分组收集动画表和帧碰撞形状（`FixDef`），不同分组的同名动画（`idle`、`run`）互不干扰；放置的瓦片可以是该角色任意一帧（不必是带 `TileAnimation` 的首帧，按帧引用反查分组）。`group` 留空表示不分组，行为与旧版本一致：整个 tileset 的动画都归该实体，同名动画取第一个。
 
 ### 7.2 左右翻转
 

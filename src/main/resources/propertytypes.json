@@ -288,6 +288,11 @@
         "id": 14,
         "members": [
             {
+                "name": "group",
+                "type": "string",
+                "value": ""
+            },
+            {
                 "name": "name",
                 "type": "string",
                 "value": ""
