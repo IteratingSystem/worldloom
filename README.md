@@ -1103,6 +1103,17 @@ portal.teleport(carried, playerId, true);
 
 当前 `Pos.reload()` 无条件从原始 `MapObject` 重新设置 `x/y`。拥有 `B2dBody` 的实体会用快照坐标重建 Body，之后 `PosFollowBodySystem` 可把位置同步回来；只有 `Pos` 而没有 Body 的自由移动实体则会保留 Tiled 初始坐标。这是当前实现行为，需要保存此类实体位置时应先修正 `Pos.reload` 生命周期。
 
+### 返回主菜单后再读档/新游戏，JVM 原生崩溃（Box2D 重复销毁）
+
+现象：游戏中返回主菜单，再读档或点新游戏，进程直接退出（Windows 退出码 `-1073740791`），日志里出现 `hs_err_pid*.log`，调用栈为 `box2d.World.jniDispose` ← `B2dSystem.dispose` ← `WorldloomEngine.dispose`。
+
+原因：同一个 `WorldloomEngine`（或其 Artemis `World`）被释放了两次。典型写法是菜单按钮里先 `world.dispose()`，之后游戏 Screen 的 `show()` 发现旧 `engine != null`，又调一次 `engine.dispose()`。Box2D 的原生 `World` 二次 `jniDispose` 不会抛 Java 异常，而是直接崩进程。
+
+规避：
+- 引擎生命周期只由持有它的 Screen 管理：提供一个 `releaseEngine()`，内部 `engine.dispose()` 后把 `engine`、`world`、`eventSystem` 等引用全部置空；UI 只调用它，不自行 `world.dispose()`。
+- `show()` 与 `dispose()` 复用同一释放方法，保证幂等。
+- 释放发生在按钮点击处理中时，同一事件的后续监听器（如统一加的点击声）还会运行，访问已置空的 `eventSystem` 会 NPE，使用前先判空。
+
 ### jar 中找不到资源
 
 不要依赖 `FileHandle.list()`；检查资源模块是否正确生成并打包 `assets.txt`。
