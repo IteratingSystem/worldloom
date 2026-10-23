@@ -7,6 +7,8 @@ import com.artemis.utils.IntBag;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.maps.*;
 import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.graphics.Color;
+import org.worldloom.ui.inventory.SlotDatum;
 import org.worldloom.Worldloom;
 import org.worldloom.component.parent.SerializeComponent;
 import org.worldloom.manager.JsonManager;
@@ -175,7 +177,7 @@ public class EntitySerializer {
                 }
                 Property prop = new Property();
                 prop.key = key;
-                prop.value = value;
+                prop.value = copySnapshotValue(value);
                 prop.type = type.getName();
                 if (field.isAnnotationPresent(EntityReference.class) && value instanceof Number reference
                     && reference.intValue() >= 0) {
@@ -211,19 +213,78 @@ public class EntitySerializer {
         return runtime.entityId;
     }
 
+    /** 分配独立运行期镜像；组件恢复修改集合或属性时不会污染输入模板和存档。 */
     private static EntityDatum allocateEntity(World world, EntityDatum source) {
-        EntityDatum runtime = new EntityDatum();
+        EntityDatum runtime = copyEntityDatum(source);
         runtime.entityId = world.create();
-        runtime.dataFrom = source.dataFrom;
-        runtime.fromMap = source.fromMap;
-        runtime.mapObjectId = source.mapObjectId;
-        runtime.name = source.name;
-        runtime.type = source.type;
-        runtime.compMirrors = source.compMirrors;
         if (runtime.name != null && !runtime.name.isEmpty()) {
             world.getSystem(TagManager.class).register(runtime.name, runtime.entityId);
         }
         return runtime;
+    }
+
+    /**
+     * 复制实体镜像及可变属性，用于模板实例化、库存和掉落；保留来源及实体引用标识。
+     * 仅复制可序列化数据，不复制World、纹理或物理资源；null输入返回null。
+     */
+    public static EntityDatum copyEntityDatum(EntityDatum source) {
+        if (source == null) return null;
+        EntityDatum copy = new EntityDatum();
+        copy.entityId = source.entityId;
+        copy.dataFrom = source.dataFrom;
+        copy.fromMap = source.fromMap;
+        copy.mapObjectId = source.mapObjectId;
+        copy.name = source.name;
+        copy.type = source.type;
+        copy.compMirrors = new Array<>();
+        if (source.compMirrors != null)
+            for (CompMirror component : source.compMirrors) copy.compMirrors.add(copyComponentMirror(component));
+        return copy;
+    }
+
+    /** 复制单个组件镜像；容器与可变值隔离，不丢失EntityReference的稳定标签。 */
+    public static CompMirror copyComponentMirror(CompMirror source) {
+        if (source == null) return null;
+        CompMirror copy = new CompMirror();
+        copy.simpleName = source.simpleName;
+        copy.properties = new Properties();
+        if (source.properties != null) for (Property property : source.properties) {
+            Property value = new Property();
+            value.key = property.key;
+            value.type = property.type;
+            value.value = copySnapshotValue(property.value);
+            value.entityReferenceTag = property.entityReferenceTag;
+            copy.properties.add(value);
+        }
+        return copy;
+    }
+
+    /** 常用镜像类型直接复制；其余DTO沿用现有JSON契约，不另引入反射复制框架。 */
+    private static Object copySnapshotValue(Object value) {
+        if (value == null || value instanceof String || value instanceof Number
+            || value instanceof Boolean || value instanceof Character || value instanceof Enum<?>) return value;
+        if (value instanceof EntityDatum entity) return copyEntityDatum(entity);
+        if (value instanceof Color color) return new Color(color);
+        if (value instanceof SlotDatum slot) {
+            SlotDatum copy = new SlotDatum();
+            copy.copy(slot);
+            copy.selected = slot.selected;
+            copy.entityDatum = copyEntityDatum(slot.entityDatum);
+            return copy;
+        }
+        if (value instanceof Array<?> array) {
+            Array<Object> copy = new Array<>(array.ordered, array.size);
+            for (Object element : array) copy.add(copySnapshotValue(element));
+            return copy;
+        }
+        if (value.getClass().isArray()) {
+            int length = java.lang.reflect.Array.getLength(value);
+            Object copy = java.lang.reflect.Array.newInstance(value.getClass().getComponentType(), length);
+            for (int i = 0; i < length; i++)
+                java.lang.reflect.Array.set(copy, i, copySnapshotValue(java.lang.reflect.Array.get(value, i)));
+            return copy;
+        }
+        return JsonManager.getJson().fromJson(value.getClass(), JsonManager.toJson(value));
     }
 
     @SuppressWarnings("unchecked")
