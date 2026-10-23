@@ -27,6 +27,22 @@ import java.util.HashMap;
  **/
 public class EntitySerializer {
     private final static String TAG = EntitySerializer.class.getSimpleName();
+    private static final ClassValue<Field[]> SERIALIZED_FIELDS = new ClassValue<>() {
+        /** 每个组件类型仅解析一次公开序列化字段，包含继承字段。 */
+        @Override protected Field[] computeValue(Class<?> type) {
+            return java.util.Arrays.stream(type.getFields())
+                .filter(field -> field.isAnnotationPresent(SerializeParam.class)).toArray(Field[]::new);
+        }
+    };
+    private static final ClassValue<Map<String, Field>> RESTORE_FIELDS = new ClassValue<>() {
+        /** 以最具体的声明优先建立恢复字段索引，不缓存实体或World引用。 */
+        @Override protected Map<String, Field> computeValue(Class<?> type) {
+            Map<String, Field> fields = new HashMap<>();
+            for (Class<?> current = type; current != null && current != Object.class; current = current.getSuperclass())
+                for (Field field : current.getDeclaredFields()) fields.putIfAbsent(field.getName(), field);
+            return fields;
+        }
+    };
 
     public static EntityData createEntityData(String mapName, MapObjects mapObjects){
         EntityData entityDateList = new EntityData();
@@ -56,12 +72,9 @@ public class EntitySerializer {
                 compMirror.properties = new Properties();
                 compMirror.simpleName = simpleName;
 
-                Field[] fields = compClass.getFields();
+                Field[] fields = SERIALIZED_FIELDS.get(compClass);
                 for (int i = 0; i < fields.length; i++) {
                     Field field = fields[i];
-                    if (!field.isAnnotationPresent(SerializeParam.class)) {
-                        continue;
-                    }
                     Class<?> type = field.getType();
                     Property compProp = new Property();
                     compProp.key = field.getName();
@@ -116,11 +129,9 @@ public class EntitySerializer {
         entity.entityId = entityId;
         TagManager tagManager = world.getSystem(TagManager.class);
         entity.name = tagManager.getTag(entityId);
-        Bag<Component> components = new Bag<>();
-        world.getEntity(entityId).getComponents(components);
 
         boolean isSetMapMsg = false;
-        for (Component component : components) {
+        for (Component component : allComps) {
             if (isSetMapMsg){
                 break;
             }
@@ -142,15 +153,12 @@ public class EntitySerializer {
 
             Class<? extends Component> compClass = component.getClass();
             String compName = compClass.getSimpleName();
-            Field[] fields = compClass.getFields();
+            Field[] fields = SERIALIZED_FIELDS.get(compClass);
 
             CompMirror compMirror = new CompMirror();
             compMirror.simpleName = compName;
             compMirror.properties = new Properties();
             for (Field field : fields) {
-                if (!field.isAnnotationPresent(SerializeParam.class)) {
-                    continue;
-                }
                 String key = field.getName();
                 Class<?> type = field.getType();
                 Object value = null;
@@ -350,19 +358,10 @@ public class EntitySerializer {
     }
 
     /**
-     * 递归查找字段，包括父类
+     * 从类型缓存查找字段，包括父类，避免每次读档或实体同步重复反射查找。
      */
     private static Field findField(Class<?> clazz, String fieldName) throws NoSuchFieldException {
-        try {
-            return clazz.getDeclaredField(fieldName);
-        } catch (NoSuchFieldException e) {
-            Class<?> superclass = clazz.getSuperclass();
-            if (superclass != null && superclass != Object.class) {
-                return findField(superclass, fieldName);
-            } else {
-                return null;
-            }
-        }
+        return RESTORE_FIELDS.get(clazz).get(fieldName);
     }
 
     private static Object coerceType(Object value, Class<?> type) {

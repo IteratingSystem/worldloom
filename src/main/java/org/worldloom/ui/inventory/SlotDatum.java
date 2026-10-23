@@ -23,6 +23,9 @@ public class SlotDatum {
 
     // 存入物品的实体信息,用于快速创建实体
     public EntityDatum entityDatum;
+    private transient TextureRegionDrawable drawable;
+    private transient String drawableMap;
+    private transient int drawableObjectId;
 
     public void copy(SlotDatum fromSlotDatum){
         this.itemId = fromSlotDatum.itemId;
@@ -54,10 +57,15 @@ public class SlotDatum {
         return false;
     }
 
+    /** 按源地图与对象编号缓存图标包装；复制或换物后按实际来源重新绑定。 */
     public TextureRegionDrawable getDrawable() {
         if (entityDatum == null){
+            drawable = null;
             return null;
         }
+
+        if (drawable != null && drawableObjectId == entityDatum.mapObjectId
+            && java.util.Objects.equals(drawableMap, entityDatum.fromMap)) return drawable;
 
         MapManager mapManager = MapManager.getInstance();
         String fromMap = entityDatum.fromMap;
@@ -69,6 +77,9 @@ public class SlotDatum {
             Gdx.app.error(TAG,"Failed to getDrawable(),mapObject is not instanceof TextureMapObject,not has textureRegion!!");
             return null;
         }
-        return new TextureRegionDrawable(textureRegion);
+        drawable = new TextureRegionDrawable(textureRegion);
+        drawableMap = fromMap;
+        drawableObjectId = entityDatum.mapObjectId;
+        return drawable;
     }
 }

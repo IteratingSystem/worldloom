@@ -32,4 +32,20 @@ public class ScreenManager {
         }
         return table.get(zClass);
     }
+
+    /** 应用退出时释放所有已注册页面；例如在Game.dispose中先调用本方法，再释放共享资源。 */
+    public static void disposeAll() {
+        if (table == null) return;
+        var screens = table.values().toArray();
+        table.clear();
+        RuntimeException failure = null;
+        for (Screen screen : screens) {
+            try { screen.dispose(); }
+            catch (RuntimeException error) {
+                if (failure == null) failure = error;
+                else failure.addSuppressed(error);
+            }
+        }
+        if (failure != null) throw failure;
+    }
 }

@@ -30,9 +30,11 @@ public class RenderTiledSystem extends BaseSystem {
         this.worldScale = worldScale;
     }
 
+    /** 切图时复用渲染器及其批次，避免每次进入室内都遗留一个SpriteBatch。 */
     public void changeMap(){
         tiledMap = tiledMapSystem.getTiledMap();
-        mapRenderer = new OrthogonalTiledMapRenderer(tiledMap,worldScale);
+        if (mapRenderer == null) mapRenderer = new OrthogonalTiledMapRenderer(tiledMap,worldScale);
+        else mapRenderer.setMap(tiledMap);
     }
 
     @Override
@@ -63,5 +65,14 @@ public class RenderTiledSystem extends BaseSystem {
             mapRenderer.setView(cameraSystem.camera);
             mapRenderer.renderTileLayer(tiledMapTileLayer);
         }
+    }
+
+    /** 只释放本系统创建的渲染器；共享TiledMap仍由AssetManager持有。 */
+    @Override protected void dispose() {
+        if (mapRenderer != null) {
+            mapRenderer.dispose();
+            mapRenderer = null;
+        }
+        tiledMap = null;
     }
 }

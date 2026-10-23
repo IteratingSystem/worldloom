@@ -11,6 +11,7 @@ import com.badlogic.gdx.maps.tiled.TiledMap;
 import com.badlogic.gdx.maps.tiled.TiledMapTileLayer;
 import com.badlogic.gdx.maps.tiled.renderers.OrthogonalTiledMapRenderer;
 import com.badlogic.gdx.utils.ScreenUtils;
+import com.badlogic.gdx.utils.ObjectMap;
 
 /**
  * 图层采样工具
@@ -18,7 +19,7 @@ import com.badlogic.gdx.utils.ScreenUtils;
 public class SamplingUtils {
     private static final String TAG = SamplingUtils.class.getSimpleName();
     private static SamplingUtils instance;
-    private FrameBuffer fbo;
+    private final ObjectMap<Texture, FrameBuffer> buffers = new ObjectMap<>();
     private OrthogonalTiledMapRenderer mapRenderer;
     private OrthographicCamera camera;
 
@@ -48,27 +49,48 @@ public class SamplingUtils {
         }
 
 
+        if (mapLayer == null) throw new IllegalArgumentException("Missing tile layer: " + layerName);
         int width = mapLayer.getWidth()*mapLayer.getTileWidth();
         int height = mapLayer.getHeight()*mapLayer.getTileHeight();
-        fbo = new FrameBuffer(Pixmap.Format.RGBA8888, width, height, false);
+        FrameBuffer fbo = new FrameBuffer(Pixmap.Format.RGBA8888, width, height, false);
         camera.setToOrtho(true, width, height);
         camera.update();
         mapRenderer.setMap(tiledMap);
         mapRenderer.setView(camera);
 
-        fbo.begin();
+        try {
+            fbo.begin();
+            try {
+                Gdx.gl.glClearColor(0, 0, 0, 0);
+                Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
+                mapRenderer.getBatch().begin();
+                try { mapRenderer.renderTileLayer(mapLayer); }
+                finally { mapRenderer.getBatch().end(); }
+            } finally { fbo.end(); }
+            Texture texture = fbo.getColorBufferTexture();
+            texture.setFilter(minFilter, magFilter);
+            TextureRegion result = new TextureRegion(texture);
+            buffers.put(texture, fbo);
+            return result;
+        } catch (RuntimeException | Error failure) {
+            fbo.dispose();
+            throw failure;
+        }
+    }
 
-        //清屏与清空FBO颜色缓冲区
-        Gdx.gl.glClearColor(0, 0, 0, 0);
-        Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
+    /** 释放一次采样结果及其帧缓冲；同一结果重复释放无副作用，不触碰资源管理器纹理。 */
+    public void release(TextureRegion region) {
+        if (region == null) return;
+        FrameBuffer buffer = buffers.remove(region.getTexture());
+        if (buffer != null) buffer.dispose();
+    }
 
-        mapRenderer.getBatch().begin();
-        mapRenderer.renderTileLayer(mapLayer);
-        mapRenderer.getBatch().end();
-        fbo.end();
-
-        Texture texture = fbo.getColorBufferTexture();
-        texture.setFilter(minFilter, magFilter);
-        return new TextureRegion(texture);
+    /** 应用退出时释放剩余采样结果和工具自有批次；例如在全部engine.dispose()之后调用。 */
+    public static void disposeInstance() {
+        if (instance == null) return;
+        for (FrameBuffer buffer : instance.buffers.values()) buffer.dispose();
+        instance.buffers.clear();
+        instance.mapRenderer.dispose();
+        instance = null;
     }
 }

@@ -20,6 +20,8 @@ public class ItemSlotGrid extends BaseEcsUI {
 
     //拖拽功能
     private DragAndDrop dragAndDrop;
+    private final ObjectMap<ItemSlot, DragAndDrop.Source> dragSources = new ObjectMap<>();
+    private final ObjectMap<ItemSlot, DragAndDrop.Target> dragTargets = new ObjectMap<>();
 
     /**
      * 阻止从这些类型的视图中拖拽物品并放入当前网格。
@@ -92,17 +94,19 @@ public class ItemSlotGrid extends BaseEcsUI {
     }
 
 
+    /** 重建格子前注销本视图的旧拖拽绑定，不影响共用同一拖拽管理器的其他视图。 */
     public void rebuild() {
         if (slotData == null) {
             Gdx.app.error(getTag(),"Failed to rebuild,'slotData' is null!Please run function with 'setSlotData()'");
             return;
         }
-        slotTable.clear();
+        clearSlots();
         int rows = slotData.size;
-        int cols = slotData.get(0).size;
-        slots = new ItemSlot[rows][cols];
+        slots = new ItemSlot[rows][];
 
         for (int r = 0; r < rows; r++) {
+            int cols = slotData.get(r).size;
+            slots[r] = new ItemSlot[cols];
             for (int c = 0; c < cols; c++) {
                 ItemSlot itemSlot = new ItemSlot(world,slotStyle);
                 slotTable.add(itemSlot).size(slotSize);
@@ -119,6 +123,16 @@ public class ItemSlotGrid extends BaseEcsUI {
             }
             slotTable.row();
         }
+    }
+
+    /** 自定义布局重建时先调用此方法；只清理当前网格的Actor和拖拽注册。 */
+    protected void clearSlots() {
+        for (DragAndDrop.Source source : dragSources.values()) dragAndDrop.removeSource(source);
+        for (DragAndDrop.Target target : dragTargets.values()) dragAndDrop.removeTarget(target);
+        dragSources.clear();
+        dragTargets.clear();
+        slots = null;
+        slotTable.clear();
     }
 
     public ItemSlot getSlot(int x,int y){
@@ -147,14 +161,18 @@ public class ItemSlotGrid extends BaseEcsUI {
     }
 
     /* ===== 拖拽能力 ===== */
+    /** 为格子注册一次拖拽，注册对象由当前网格持有并在重建时注销。 */
     public void enableDrag(ItemSlot slot) {
-        dragAndDrop.addSource(new DragAndDrop.Source(slot) {
+        if (dragSources.containsKey(slot)) return;
+        DragAndDrop.Source source = new DragAndDrop.Source(slot) {
             //按住开始拖拽
+            /** 向当前网格请求拖拽载荷。 */
             @Override
             public DragAndDrop.Payload dragStart(InputEvent event, float x, float y, int pointer) {
                 return onDragStart(slot);   // 交给子类
             }
             //拖到空地
+            /** 根据当前网格策略处理拖拽结束。 */
             @Override
             public void dragStop(InputEvent event, float x, float y, int pointer, DragAndDrop.Payload payload, DragAndDrop.Target target) {
                 if (!canDragStop) {
@@ -162,11 +180,12 @@ public class ItemSlotGrid extends BaseEcsUI {
                 }
                 onDragStop(event, x, y, pointer, payload, target);
             }
-        });
+        };
 
-        dragAndDrop.addTarget(new DragAndDrop.Target(slot) {
+        DragAndDrop.Target target = new DragAndDrop.Target(slot) {
 
             //拖拽后触碰到
+            /** 禁用格子不接受拖放。 */
             @Override
             public boolean drag(DragAndDrop.Source source,
                                 DragAndDrop.Payload payload,
@@ -174,6 +193,7 @@ public class ItemSlotGrid extends BaseEcsUI {
                 return !slot.isDisabled();
             }
             //拖拽后松开按钮
+            /** 校验来源后交由网格处理实际转移。 */
             @Override
             public void drop(DragAndDrop.Source source,
                              DragAndDrop.Payload payload,
@@ -187,7 +207,11 @@ public class ItemSlotGrid extends BaseEcsUI {
                 onDrop(source,payload,getActor());
             }
 
-        });
+        };
+        dragSources.put(slot, source);
+        dragTargets.put(slot, target);
+        dragAndDrop.addSource(source);
+        dragAndDrop.addTarget(target);
     }
 
     /* ===== 子类唯一要关心的两个钩子 ===== */

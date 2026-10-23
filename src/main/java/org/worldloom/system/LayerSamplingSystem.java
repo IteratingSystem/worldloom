@@ -71,4 +71,10 @@ public class LayerSamplingSystem extends IteratingSystem {
         Render render = mRender.get(entityId);
         render.keyframe = textureRegion;
     }
+
+    /** World.dispose不会逐个销毁组件，因此显式释放仍然存活的采样结果。 */
+    @Override protected void dispose() {
+        var ids = world.getAspectSubscriptionManager().get(com.artemis.Aspect.all(LayerSampling.class)).getEntities();
+        for (int i = 0; i < ids.size(); i++) mSampling.get(ids.get(i)).dispose();
+    }
 }

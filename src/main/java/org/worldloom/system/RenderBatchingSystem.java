@@ -89,7 +89,7 @@ public class RenderBatchingSystem extends BaseSystem implements EntityProcessPri
             this.entityId = entityId;
             this.agent = agent;
         }
-        //渲染顺序
+        /** 按完整浮点层级比较，保留不足一个像素的深度差并满足排序传递性。 */
         @Override
         public int compareTo(Job o) {
             int entityIdO = o.entityId;
@@ -103,7 +103,7 @@ public class RenderBatchingSystem extends BaseSystem implements EntityProcessPri
                 ZIndex zIndex = mZIndex.get(entityId);
                 startNum = zIndex.index;
             }
-            return (int)(startNum-endNum);
+            return Float.compare(startNum, endNum);
         }
     }
 }

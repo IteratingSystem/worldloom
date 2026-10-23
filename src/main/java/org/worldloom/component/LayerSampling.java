@@ -11,12 +11,14 @@ import org.worldloom.component.parent.SerializeComponent;
 import org.worldloom.manager.map.MapManager;
 import org.worldloom.serialize.SerializeParam;
 import org.worldloom.serialize.data.EntityDatum;
+import org.worldloom.utils.SamplingUtils;
+import com.badlogic.gdx.utils.Disposable;
 
 
 /**
  * 图层采样组件
  */
-public class LayerSampling extends SerializeComponent {
+public class LayerSampling extends SerializeComponent implements Disposable {
     private static final String TAG = LayerSampling.class.getSimpleName();
     @SerializeParam
     public String layerName;
@@ -28,8 +30,10 @@ public class LayerSampling extends SerializeComponent {
 
     @Override
     public void reload(World world, EntityDatum entityDatum) {
+        dispose();
         super.reload(world, entityDatum);
         isCreateAnim = false;
+        flagAnimTile = null;
         //获取地图
         TiledMap tiledMap = MapManager.getInstance().getTiledMap(entityDatum.fromMap);
         //获取图层
@@ -76,5 +80,13 @@ public class LayerSampling extends SerializeComponent {
             }
         }
         return true;
+    }
+
+    /** 实体删除或世界退出时释放采样产生的纹理，图层源素材不受影响。 */
+    @Override public void dispose() {
+        if (regions == null) return;
+        for (TextureRegion region : regions) if (region != null) SamplingUtils.getInstance().release(region);
+        regions = null;
+        isCreateAnim = false;
     }
 }

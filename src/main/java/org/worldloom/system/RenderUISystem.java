@@ -9,6 +9,7 @@ import com.badlogic.gdx.utils.ObjectMap;
 import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import net.mostlyoriginal.api.event.common.Subscribe;
 import org.worldloom.event.UIEvent;
+import org.worldloom.event.CameraEvent;
 import org.worldloom.manager.input.InputManager;
 
 /**
@@ -44,6 +45,22 @@ public class RenderUISystem extends BaseSystem {
     protected void processSystem() {
         mainStage.act();
         mainStage.draw();
+    }
+
+    /** 跟随引擎窗口尺寸更新UI投影，与世界相机共用resize通知。 */
+    @Subscribe public void onResize(CameraEvent event) {
+        if (event.type == CameraEvent.RESIZE && mainStage != null)
+            extendViewport.update(event.width, event.height, true);
+    }
+
+    /** 世界销毁时先注销输入，再释放舞台自有批次；不释放共享皮肤。 */
+    @Override protected void dispose() {
+        if (mainStage == null) return;
+        InputManager.removeProcessor(mainStage);
+        mainStage.dispose();
+        mainStage = null;
+        stack = null;
+        uiMap.clear();
     }
 
     private void register(Table ui){

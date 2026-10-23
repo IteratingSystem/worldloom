@@ -12,6 +12,7 @@ import com.badlogic.gdx.maps.tiled.TiledMapTileLayer;
 import com.badlogic.gdx.maps.tiled.TiledMapTileSet;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ObjectMap;
+import com.badlogic.gdx.utils.IntMap;
 import org.worldloom.manager.AssetManager;
 import org.worldloom.serialize.EntitySerializer;
 import org.worldloom.serialize.data.EntityData;
@@ -30,6 +31,7 @@ public class MapManager {
     private ObjectMap<String, String[]> phyLayerNames;
     private ObjectMap<String, MapLayer> entityLayers;
     private ObjectMap<String, MapObjects> allMapObjects;
+    private final ObjectMap<String, IntMap<MapObject>> objectsById = new ObjectMap<>();
     //每张地图对应的实体数据，作为原型，地图加载时默认存在的所有实体，也就是新游戏时创建实体的依据
     private ObjectMap<String, EntityData> protoEntityData;
     private Bag<TiledMapTileSet> tileSets;
@@ -69,6 +71,10 @@ public class MapManager {
             MapLayer entityLayer = tiledMap.getLayers().get(entityLayerName);
             MapObjects mapObjects = entityLayer.getObjects();
             allMapObjects.put(mapName,mapObjects);
+            IntMap<MapObject> index = new IntMap<>();
+            for (MapObject object : mapObjects)
+                index.put(object.getProperties().get("id", -1, Integer.class), object);
+            objectsById.put(mapName, index);
             protoEntityData.put(mapName,EntitySerializer.createEntityData(mapName,mapObjects));
             for (TiledMapTileSet tileSet : tiledMap.getTileSets()) {
                 if (tileSets.contains(tileSet)) {
@@ -126,14 +132,11 @@ public class MapManager {
         }
         return allMapObjects.get(mapName);
     }
+    /** 按加载时建立的编号索引读取Tiled源对象，不扫描整张对象层。 */
     public MapObject getMapObject(String mapName,int objectId){
-        MapObjects mapObjects = getMapObjects(mapName);
-        for (MapObject mapObject : mapObjects) {
-            Integer id = mapObject.getProperties().get("id", -1, Integer.class);
-            if (objectId == id){
-                return mapObject;
-            }
-        }
+        IntMap<MapObject> index = objectsById.get(mapName);
+        MapObject object = index == null ? null : index.get(objectId);
+        if (object != null) return object;
         Gdx.app.error(TAG,"Failed to getMapObject,No objects with the same id,objectId:"+objectId);
         return null;
     }

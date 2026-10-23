@@ -846,6 +846,8 @@ events.dispatch(only);
 
 `UIStage` 是使用 Worldloom UI 尺寸和 FitViewport 的独立 Stage，可为特殊页面传入私有 zoom。主 ECS UI 则由 `RenderUISystem` 的 `ExtendViewport` 管理。
 
+4.5.2 起，`RenderUISystem` 随 `engine.resize(width, height)` 更新投影，世界销毁时自动注销输入并释放自有 Stage/Batch。Skin、TiledMap 和源 Texture 仍由应用资源管理器持有，必须在所有引擎和页面释放后才销毁共享资源。
+
 ### 13.2 库存网格
 
 相关类：
@@ -872,6 +874,8 @@ grid.rebuild();
 - `setSelectOnly`：单选某格。
 
 调用 `setSlotData` 后必须调用 `rebuild()` 才会生成格子 Actor。
+
+`rebuild()` 会注销本视图旧格子的拖拽 Source/Target，不影响共用同一 `DragAndDrop` 的其他库存。自定义空间布局重写 `rebuild()` 时，先调用受保护的 `clearSlots()`，再生成布局并逐格 `enableDrag(slot)`；同一个格子重复启用不会重复注册。允许空网格和不等长行。`SlotDatum.getDrawable()` 按源地图/对象编号缓存包装，运行时缓存不写进存档。
 
 格子可用 `slot.addAcceptType(ItemType.SWORD)` 限定物品类型。类型列表为空或未设置时接受所有类型；
 交换物品时会同时校验目标格和来源格，避免从装备栏拖向背包时把不兼容的物品换回装备栏。
@@ -929,6 +933,8 @@ GameManager.getCurrent().setScreen(menu);
 `ScreenManager` 只负责按类保存和查找 Screen，不会自动执行 `Game.setScreen`。
 
 ## 15. 存档、读档与多地图切换
+
+4.5.2 缓存组件序列化/恢复字段元数据，保留继承字段、枚举与实体引用规则；缓存仅持有 Class/Field，不持有 World 或实体。`MapManager.getMapObject` 使用加载时的对象编号索引，返回源对象；加载后不要修改源地图对象的编号或直接向对象层增删对象，动态实体仍通过 ECS 创建。
 
 ### 15.1 数据模型
 
@@ -1060,6 +1066,14 @@ portal.teleport(carried, playerId, true);
 - `WorldSerializationManager`
 
 ## 17. 实用工具与底层入口
+
+4.5.2 的生命周期与热路径约定：
+
+- `ScreenManager.disposeAll()`：应用退出时释放所有注册页面并清表，某页抛异常仍继续释放其余页面；页面自己的 `dispose()` 应幂等。LibGDX `Game.dispose()` 仅调用当前页面 `hide()`，不能替代本方法。
+- 地图渲染器在切图时复用同一个 Batch，世界销毁时统一释放，业务系统不能另行 dispose 这个共享 Batch。
+- `LayerSampling` 实现 `Disposable`；重新加载、实体删除及世界销毁会释放自有采样FBO。直接调用 `SamplingUtils.samplingLayer(...)` 的调用者需在用完后执行 `SamplingUtils.getInstance().release(region)`；所有世界关闭后调用 `SamplingUtils.disposeInstance()` 释放工具批次与残余结果。源图层贴图不受影响，以上操作均在渲染线程执行。
+- 动画帧碰撞体仅在动作、帧号、翻转、身体/形状集合替换或动作重启时重建；同一帧保留接触。玩法不能依赖每个游戏帧销毁夹具制造重复 `beginContact`；伤害间隔由业务系统管理。重载形状时替换 `keyframeFixSetups` 集合，不原位修改已有定义。
+- Z 排序保留完整浮点深度差，避免小于1的差值被当成相等。
 
 - `JsonManager`：统一的 LibGDX JSON `toJson` / `fromJson`。
 - `SkinManager.getSkin(path)`：加载或获取 Scene2D Skin。
