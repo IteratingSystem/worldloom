@@ -62,7 +62,7 @@ public class EntitySerializer {
 
             // 获取所有组件
             ReflectionManager reflectionManager = ReflectionManager.getInstance();
-            Set<Class<? extends Component>> compClasses = reflectionManager.getSubTypesOfWithEngineAndGame(Component.class);
+            var compClasses = reflectionManager.getSubTypesBySimpleName(Component.class).values();
 
             for (Class<? extends Component> compClass : compClasses) {
                 String simpleName = compClass.getSimpleName();
@@ -287,87 +287,91 @@ public class EntitySerializer {
         return JsonManager.getJson().fromJson(value.getClass(), JsonManager.toJson(value));
     }
 
+    /** 按名称索引组件镜像，沿用类型集合的恢复顺序，避免每个类型再次扫描全部镜像。 */
     @SuppressWarnings("unchecked")
     private static void restoreComponents(World world, EntityDatum entityDatum, Map<Integer, Integer> restoredIds) {
         int entityId = entityDatum.entityId;
 
         Array<CompMirror> components = entityDatum.compMirrors;
         ReflectionManager reflectionManager = ReflectionManager.getInstance();
-        Set<Class<? extends Component>> compClasses = reflectionManager.getSubTypesOfWithEngineAndGame(Component.class);
+        var compClasses = reflectionManager.getSubTypesBySimpleName(Component.class).values();
+        Map<String, CompMirror> mirrors = new HashMap<>();
+        for (CompMirror mirror : components) {
+            if (mirrors.putIfAbsent(mirror.simpleName, mirror) != null)
+                throw new IllegalArgumentException("重复组件镜像：" + mirror.simpleName);
+        }
 
         for (Class<? extends Component> aClass : compClasses) {
             String simpleName = aClass.getSimpleName();
-            for (CompMirror compMirror : components) {
-                if (!simpleName.equals(compMirror.simpleName)) {
+            CompMirror compMirror = mirrors.get(simpleName);
+            if (compMirror == null) continue;
+
+            ComponentMapper<? extends Component> mapper = world.getMapper(aClass);
+            if (mapper == null) {
+                continue;
+            }
+
+            Component component = mapper.create(entityId);
+
+            // 赋值属性
+            Array<Property> props = compMirror.properties;
+            for (Property prop : props) {
+                String key = prop.key;
+                Object value = prop.value;
+                if (value == null) {
                     continue;
                 }
-
-                ComponentMapper<? extends Component> mapper = world.getMapper(aClass);
-                if (mapper == null) {
-                    break;
-                }
-
-                Component component = mapper.create(entityId);
-
-                // 赋值属性
-                Array<Property> props = compMirror.properties;
-                for (Property prop : props) {
-                    String key = prop.key;
-                    Object value = prop.value;
-                    if (value == null) {
+                try {
+                    // 递归查找字段（包括父类）
+                    Field field = findField(aClass, key);
+                    if (field == null) {
+                        Gdx.app.error(TAG, "Failed to findField: " + key + " in " + compMirror.simpleName);
                         continue;
                     }
-                    try {
-                        // 递归查找字段（包括父类）
-                        Field field = findField(aClass, key);
-                        if (field == null) {
-                            Gdx.app.error(TAG, "Failed to findField: " + key + " in " + compMirror.simpleName);
-                            continue;
-                        }
-                        if (!field.isAnnotationPresent(SerializeParam.class)) {
-                            Gdx.app.error(TAG,"Field " + key + " is not annotated with " + SerializeParam.class.getSimpleName() + "in "+compMirror.simpleName );
-                            continue;
-                        }
-                        field.setAccessible(true); // 允许访问私有字段
+                    if (!field.isAnnotationPresent(SerializeParam.class)) {
+                        Gdx.app.error(TAG,"Field " + key + " is not annotated with " + SerializeParam.class.getSimpleName() + "in "+compMirror.simpleName );
+                        continue;
+                    }
+                    field.setAccessible(true); // 允许访问私有字段
 
-                        Class<?> type = field.getType();
-                        if (restoredIds != null && entityDatum.dataFrom == EntityData.FROM_WORLD
-                            && field.isAnnotationPresent(EntityReference.class)) {
-                            if (type != int.class) {
-                                throw new IllegalArgumentException("EntityReference must annotate an int: " + field);
-                            }
-                            int oldId = ((Number) coerceType(value, int.class)).intValue();
-                            int taggedId = prop.entityReferenceTag == null ? -1
-                                : world.getSystem(TagManager.class).getEntityId(prop.entityReferenceTag);
-                            value = oldId < 0 ? -1 : taggedId >= 0 ? taggedId : restoredIds.getOrDefault(oldId, -1);
+                    Class<?> type = field.getType();
+                    if (restoredIds != null && entityDatum.dataFrom == EntityData.FROM_WORLD
+                        && field.isAnnotationPresent(EntityReference.class)) {
+                        if (type != int.class) {
+                            throw new IllegalArgumentException("EntityReference must annotate an int: " + field);
                         }
-                        if (type.isEnum()) {
-                            // 假设 value 为 String（枚举名称）或 Number（枚举序数）
-                            if (value instanceof String) {
-                                try {
-                                    Class<? extends Enum> enumClass = type.asSubclass(Enum.class);
-                                    value = Enum.valueOf(enumClass, (String) value);
-                                } catch (IllegalArgumentException e) {
-                                    Gdx.app.error(TAG, "Invalid enum name: " + value + " for field " + key);
-                                    continue;
-                                }
-                            } else if (value instanceof Number) {
-                                // 按枚举序数转换
-                                int ordinal = ((Number) value).intValue();
-                                Object[] enumConstants = type.getEnumConstants();
-                                if (ordinal >= 0 && ordinal < enumConstants.length) {
-                                    value = enumConstants[ordinal];
-                                } else {
-                                    Gdx.app.error(TAG, "Invalid enum ordinal: " + ordinal + " for field " + key);
-                                    continue;
-                                }
+                        int oldId = ((Number) coerceType(value, int.class)).intValue();
+                        int taggedId = prop.entityReferenceTag == null ? -1
+                            : world.getSystem(TagManager.class).getEntityId(prop.entityReferenceTag);
+                        value = oldId < 0 ? -1 : taggedId >= 0 ? taggedId : restoredIds.getOrDefault(oldId, -1);
+                    }
+                    if (type.isEnum()) {
+                        // 假设 value 为 String（枚举名称）或 Number（枚举序数）
+                        if (value instanceof String) {
+                            try {
+                                Class<? extends Enum> enumClass = type.asSubclass(Enum.class);
+                                value = Enum.valueOf(enumClass, (String) value);
+                            } catch (IllegalArgumentException e) {
+                                Gdx.app.error(TAG, "Invalid enum name: " + value + " for field " + key);
+                                continue;
+                            }
+                        } else if (value instanceof Number) {
+                            // 按枚举序数转换
+                            int ordinal = ((Number) value).intValue();
+                            Object[] enumConstants = type.getEnumConstants();
+                            if (ordinal >= 0 && ordinal < enumConstants.length) {
+                                value = enumConstants[ordinal];
                             } else {
-                                Gdx.app.error(TAG, "Unsupported value type for enum field " + key + ": " + value.getClass());
+                                Gdx.app.error(TAG, "Invalid enum ordinal: " + ordinal + " for field " + key);
                                 continue;
                             }
                         } else {
-                            value = coerceType(value, type);
+                            Gdx.app.error(TAG, "Unsupported value type for enum field " + key + ": " + value.getClass());
+                            continue;
                         }
+                    } else {
+                        value = coerceType(value, type);
+                    }
 
 //                        if (value instanceof Array<?> arrayValue && arrayValue.notEmpty()) {
 //                            try {
@@ -397,23 +401,21 @@ public class EntitySerializer {
 //                                Gdx.app.error(TAG, "Failed to convert Array elements for field " + key + ": " + e.getMessage());
 //                            }
 //                        }
-                        if (value instanceof Array<?> arrayValue && arrayValue.notEmpty()) {
-                            restoreArrayElements(field, key, arrayValue);
-                        }
-
-                        field.set(component, value);
-
-
-                    } catch (NoSuchFieldException | IllegalAccessException e) {
-                        throw new RuntimeException("Failed to set field " + key + " on " + aClass.getName(), e);
+                    if (value instanceof Array<?> arrayValue && arrayValue.notEmpty()) {
+                        restoreArrayElements(field, key, arrayValue);
                     }
-                }
 
-                // 执行 reload
-                if (component instanceof SerializeComponent) {
-                    ((SerializeComponent) component).reload(world, entityDatum);
-                    break; // 注意：break 只会跳出内部循环，但通常此组件已处理完成，可以继续下一个组件类
+                    field.set(component, value);
+
+
+                } catch (NoSuchFieldException | IllegalAccessException e) {
+                    throw new RuntimeException("Failed to set field " + key + " on " + aClass.getName(), e);
                 }
+            }
+
+            // 执行 reload
+            if (component instanceof SerializeComponent) {
+                ((SerializeComponent) component).reload(world, entityDatum);
             }
         }
     }

@@ -39,6 +39,8 @@ public class ReflectionManager {
     private final HashMap<Class, Reflections> reflectionsCache = new HashMap<>();
     // 缓存：(rootClass, type) -> 子类型集合（避免重复 getSubTypesOf 查询）
     private final HashMap<Map.Entry<Class, Class>, Set> subTypesCache = new HashMap<>();
+    private final Map<Map.Entry<Class, Class>, Set<?>> combinedTypesCache = new HashMap<>();
+    private final Map<Map.Entry<Class, Class>, Map<?, ?>> namedTypesCache = new HashMap<>();
 
     // 单例限制构造器
     private ReflectionManager() {
@@ -47,8 +49,12 @@ public class ReflectionManager {
             return;
         }
     }
-    // 设置游戏项目根类,使用此管理器的游戏项目需要设置
+    /** 设置游戏根类；更换宿主时丢弃依赖宿主的合并类型索引。 */
     public static void setRootClass(Class ROOT_CLASS_GAME){
+        if (ReflectionManager.ROOT_CLASS_GAME != ROOT_CLASS_GAME && instance != null) {
+            instance.combinedTypesCache.clear();
+            instance.namedTypesCache.clear();
+        }
         ReflectionManager.ROOT_CLASS_GAME = ROOT_CLASS_GAME;
     }
     // 获取单例
@@ -60,12 +66,33 @@ public class ReflectionManager {
     }
 
 
-    // 获取游戏项目中所有继承于传入类型的类
+    /** 按宿主和父类型缓存引擎与游戏的只读类型集合，不重复分配合并集合。 */
     @SuppressWarnings("unchecked")
     public <T> Set<Class<? extends T>> getSubTypesOfWithEngineAndGame(Class<T> type) {
+        Map.Entry<Class, Class> key = new AbstractMap.SimpleImmutableEntry<>(ROOT_CLASS_GAME, type);
+        Set<?> cached = combinedTypesCache.get(key);
+        if (cached != null) return (Set<Class<? extends T>>) cached;
         Set<Class<? extends T>> subTypes = new java.util.HashSet<>(getSubTypesOfWithEngine(type));
         subTypes.addAll(getSubTypesOfWithGame(type));
-        return subTypes;
+        Set<Class<? extends T>> result = java.util.Collections.unmodifiableSet(subTypes);
+        combinedTypesCache.put(key, result);
+        return result;
+    }
+    /** 为名称绑定建立只读索引并拒绝歧义；迭代顺序与原类型集合一致。 */
+    @SuppressWarnings("unchecked")
+    public <T> Map<String, Class<? extends T>> getSubTypesBySimpleName(Class<T> type) {
+        Map.Entry<Class, Class> key = new AbstractMap.SimpleImmutableEntry<>(ROOT_CLASS_GAME, type);
+        Map<?, ?> cached = namedTypesCache.get(key);
+        if (cached != null) return (Map<String, Class<? extends T>>) cached;
+        Map<String, Class<? extends T>> names = new java.util.LinkedHashMap<>();
+        for (Class<? extends T> candidate : getSubTypesOfWithEngineAndGame(type)) {
+            Class<?> previous = names.putIfAbsent(candidate.getSimpleName(), candidate);
+            if (previous != null) throw new IllegalStateException("类型名称冲突："
+                + previous.getName() + " / " + candidate.getName());
+        }
+        Map<String, Class<? extends T>> result = java.util.Collections.unmodifiableMap(names);
+        namedTypesCache.put(key, result);
+        return result;
     }
     @SuppressWarnings("unchecked")
     public <T> Set<Class<? extends T>> getSubTypesOfWithGame(Class<T> type) {
