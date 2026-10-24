@@ -53,7 +53,6 @@ Worldloom 还集成了 box2dlights、gdx-ai、blade-ink、Artemis contrib event 
 | `MapManager` | 解析全部地图的实体层与物理层，保存不可变的初始实体数据 |
 | `GameSnapshotManager` | 管理一次游戏会话的当前地图、各地图实体快照和系统属性 |
 | `EntityBuilder` / `EntitySerializer` | 在 Tiled 数据、存档数据和运行时实体之间转换 |
-
 | `WorldloomEngine` | 创建并持有 Artemis `World`，统一驱动生命周期 |
 | `WorldloomGameModule` | 把游戏业务系统注册到稳定的执行阶段 |
 | `EventSystem` | 在游戏代码与引擎系统之间传递实体、地图、相机、UI 等命令 |
