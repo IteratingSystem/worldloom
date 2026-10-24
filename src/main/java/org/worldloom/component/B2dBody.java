@@ -329,7 +329,6 @@ public class B2dBody extends SerializeComponent implements Disposable {
      */
     public Bag<Fixture> getContactFixtures(Fixture fixture){
         Bag<Fixture> fixtures = new Bag<>();
-        Array<Contact> contactList = b2dWorld.getContactList();
         Array.ArrayIterator<Contact> iterator = new Array.ArrayIterator<>(b2dWorld.getContactList());
         while (iterator.hasNext()) {
             Contact contact = iterator.next();

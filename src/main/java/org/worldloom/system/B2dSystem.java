@@ -87,8 +87,9 @@ public class B2dSystem extends BaseSystem {
         }
     }
 
+    /** 清空全部碰撞体；只允许在物理步进之外调用，不推进世界时间。 */
     public void delAllCollider(){
-        box2DWorld.step(world.delta, 6, 2);
+        requireUnlocked();
         Array<Body> bodies = new Array<>();
         box2DWorld.getBodies(bodies);
         // 转换为不可变数组
@@ -110,7 +111,7 @@ public class B2dSystem extends BaseSystem {
      * 这个方法用于地图切换时，只清理地图相关的碰撞体
      */
     public void delTileCollider() {
-        box2DWorld.step(world.delta, 6, 2);
+        requireUnlocked();
         //只销毁tile碰撞体
         for (Body body : tileCollider) {
             if (body != null && body.getWorld() != null) {
@@ -122,6 +123,10 @@ public class B2dSystem extends BaseSystem {
             }
         }
         tileCollider.clear();
+    }
+    /** 清理属于物理结构变更，不能在接触回调内操作被锁定的Box2D世界。 */
+    private void requireUnlocked() {
+        if (box2DWorld.isLocked()) throw new IllegalStateException("请在物理步进结束后清理碰撞体");
     }
     @Override
     protected void processSystem() {

@@ -25,6 +25,8 @@ public class ItemSlot extends WidgetGroup {
     public ItemSlot(World world, SlotDatum slotDatum) {}
 
     private ItemSlotStyle style;
+    private Drawable backgroundOverride;
+    private boolean backgroundOverridden;
     private Image bg;      // 背景
     private Image icon;    // 物品图标
     private Image selectedOverlay;
@@ -138,9 +140,10 @@ public class ItemSlot extends WidgetGroup {
         this.invUI = invUI;
     }
 
-    /** 换背景图（普通/装备/任务…） */
+    /** 仅替换当前格子的常态背景，不修改Skin或其它格子共用的样式。 */
     public void setBackground(Drawable drawable) {
-        style.up = drawable;
+        backgroundOverride = drawable;
+        backgroundOverridden = true;
         refreshDrawables();
     }
 
@@ -154,13 +157,8 @@ public class ItemSlot extends WidgetGroup {
         icon.setVisible(drawable != null);
     }
 
-    public int getAmount() {
-        String amountStr = amount.getText().toString();
-        if (amountStr.isBlank()){
-            amountStr = "0";
-        }
-        return Integer.parseInt(amountStr);
-    }
+    /** 查询绑定数据的真实数量；单件物品隐藏数字不影响此结果。 */
+    public int getAmount() { return slotDatum == null ? 0 : slotDatum.stackAmount; }
     /** 数量文本 */
     private void setAmount(int count) {
         amount.setText(count <= 1 ? "" : String.valueOf(count));
@@ -206,9 +204,10 @@ public class ItemSlot extends WidgetGroup {
         return selected;
     }
 
+    /** 根据本格子交互状态选择背景，实例覆盖只作用于常态背景。 */
     public void refreshDrawables() {
         // 背景状态机
-        Drawable front = style.up;
+        Drawable front = backgroundOverridden ? backgroundOverride : style.up;
         if (disabled && style.disabled != null) front = style.disabled;
         else if (pressed && style.down != null) front = style.down;
         else if (hovered && style.over != null) front = style.over;

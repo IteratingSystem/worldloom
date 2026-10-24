@@ -440,6 +440,8 @@ EntityDatum snapshot = request.entityDatum;
 
 ## 9. 物理与碰撞
 
+物理时间只由`B2dSystem.processSystem()`推进。`delTileCollider()`及`delAllCollider()`仅清理碰撞体，不额外执行物理步进；必须在接触回调之外、Box2D世界未锁定时调用。
+
 `B2dSystem` 根据 `PHY_LAYERS` 创建地图静态碰撞体，根据实体的 `B2dBody` 创建动态对象。Tiled 瓦片对象可通过 `FixDef` 类属性配置 Fixture：
 
 实体的 `B2dBody` 类属性负责 Body 本身：`defType` 选择 `StaticBody`、`KinematicBody` 或 `DynamicBody`，`defFixed` 控制固定旋转，`linearDamping` 设置线性阻尼。
@@ -855,6 +857,8 @@ events.dispatch(only);
 - `SlotDatum`：物品 ID、堆叠数量、最大堆叠、类型和图标等格子数据。
 - `ItemSlot`：单个可选中、可禁用的格子 Actor。
 - `ItemSlotGrid`：二维格子、拖放、合并、交换、来源限制和所有者管理。
+
+`ItemSlot.getAmount()`返回绑定数据中的实际数量（单件隐藏数字时仍返回1）；`setBackground(drawable)`仅覆盖当前格子的常态背景，不修改Skin中共享样式，悬停/按下等状态仍使用原样式。
 
 ```java
 DragAndDrop dragAndDrop = new DragAndDrop();
