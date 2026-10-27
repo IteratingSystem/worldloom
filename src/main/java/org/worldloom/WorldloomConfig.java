@@ -3,6 +3,8 @@ package org.worldloom;
 import com.artemis.Component;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ObjectMap;
+import com.badlogic.gdx.utils.ObjectSet;
+import org.worldloom.map.MapRole;
 import org.worldloom.camera.PixelPerfectCameraConfig;
 import org.worldloom.component.Pos;
 import org.worldloom.component.Render;
@@ -20,6 +22,8 @@ public final class WorldloomConfig {
     private final ObjectMap<String, String> navigationRoadLayers;
     private final Array<Class<? extends Component>> autoComponents;
     private final Array<String> residentMaps;
+    private final ObjectSet<String> residentMapIds;
+    private final ObjectMap<String, MapRole> mapRoles;
     private final int uiWidth;
     private final int uiHeight;
     private final float uiZoom;
@@ -45,6 +49,10 @@ public final class WorldloomConfig {
         navigationRoadLayers = copyStringMap(builder.navigationRoadLayers);
         autoComponents = new Array<>(builder.autoComponents);
         residentMaps = new Array<>(builder.residentMaps);
+        residentMapIds = new ObjectSet<>();
+        residentMapIds.addAll(residentMaps);
+        mapRoles = new ObjectMap<>();
+        mapRoles.putAll(builder.mapRoles);
         uiWidth = builder.uiWidth;
         uiHeight = builder.uiHeight;
         uiZoom = builder.uiZoom;
@@ -79,6 +87,19 @@ public final class WorldloomConfig {
 
     /** 查询常驻模式开关，不在逐实体物理查询中复制地图目录。 */
     public boolean isResidentMode() { return residentMaps.notEmpty(); }
+
+    /** 零分配查询正式常驻图，不能用素材来源图代替实体的运行归属。 */
+    public boolean isResidentMap(String mapId) { return mapId != null && residentMapIds.contains(mapId); }
+
+    /** 未指定用途的地图默认为常规世界，模板用途由应用配置显式声明。 */
+    public MapRole getMapRole(String mapId) { return mapRoles.get(mapId, MapRole.WORLD); }
+
+    /** 在创建实体或物理资源前验证目标图，模板只能作为来源，不能作为实例的运行归属。 */
+    public void requireRuntimeMap(String mapId) {
+        if (mapId == null || mapId.isBlank() || getMapRole(mapId) == MapRole.TEMPLATE
+            || (isResidentMode() && !isResidentMap(mapId)))
+            throw new IllegalArgumentException("不是可运行的世界地图：" + mapId);
+    }
     public int getUiWidth() { return uiWidth; }
     public int getUiHeight() { return uiHeight; }
     public float getUiZoom() { return uiZoom; }
@@ -120,6 +141,8 @@ public final class WorldloomConfig {
         private final ObjectMap<String, String> navigationRoadLayers = new ObjectMap<>();
         private final Array<Class<? extends Component>> autoComponents = new Array<>();
         private final Array<String> residentMaps = new Array<>();
+        private final ObjectMap<String, MapRole> mapRoles = new ObjectMap<>();
+        private boolean residentMapsByRole;
         private int uiWidth = 640;
         private int uiHeight = 480;
         private float uiZoom = 1f;
@@ -181,6 +204,7 @@ public final class WorldloomConfig {
         public Builder initialMap(String mapName) { initialMap = mapName; return this; }
         /** 指定共用一个ECS、独立物理世界的正式地图，必须同时配置各图实体层。 */
         public Builder residentMaps(String... mapNames) {
+            residentMapsByRole = false;
             residentMaps.clear();
             for (String name : mapNames) {
                 if (name == null || name.isBlank() || residentMaps.contains(name, false)) {
@@ -190,6 +214,20 @@ public final class WorldloomConfig {
             }
             return this;
         }
+        /** 按用途推导常驻目录：所有配置实体层的WORLD地图参与运行，TEMPLATE只保留数据。 */
+        public Builder residentMapsByRole() {
+            residentMapsByRole = true;
+            return this;
+        }
+
+        /** 声明地图用途；未声明的地图为WORLD，在build时校验目录，不依赖调用顺序。 */
+        public Builder mapRole(String mapName, MapRole role) {
+            if (mapName == null || mapName.isBlank() || role == null)
+                throw new IllegalArgumentException("地图名称与用途不能为空");
+            mapRoles.put(mapName, role);
+            return this;
+        }
+
         public Builder skin(String path) { skinPath = path; return this; }
 
         public Builder entityLayer(String mapName, String layerName) {
@@ -243,7 +281,22 @@ public final class WorldloomConfig {
             if (initialMap == null || initialMap.isBlank()) {
                 throw new IllegalStateException("initial map cannot be blank");
             }
-            if (!residentMaps.isEmpty() && !residentMaps.contains(initialMap, false)) {
+            for (ObjectMap.Entry<String, MapRole> entry : mapRoles) {
+                if (!entityLayers.containsKey(entry.key))
+                    throw new IllegalStateException("声明用途的地图缺少实体层：" + entry.key);
+                if (entry.value == MapRole.TEMPLATE && (entry.key.equals(initialMap)
+                    || physicsLayers.containsKey(entry.key) || navigationRoadLayers.containsKey(entry.key)))
+                    throw new IllegalStateException("模板地图不能作为初始场景或配置世界物理/导航：" + entry.key);
+            }
+            if (residentMapsByRole) {
+                residentMaps.clear();
+                for (String map : entityLayers.keys())
+                    if (mapRoles.get(map, MapRole.WORLD) == MapRole.WORLD) residentMaps.add(map);
+            }
+            for (String map : residentMaps)
+                if (mapRoles.get(map, MapRole.WORLD) == MapRole.TEMPLATE)
+                    throw new IllegalStateException("模板地图不能加入常驻目录：" + map);
+            if ((residentMapsByRole || !residentMaps.isEmpty()) && !residentMaps.contains(initialMap, false)) {
                 throw new IllegalStateException("初始地图必须属于正式常驻地图");
             }
             for (String map : residentMaps) {

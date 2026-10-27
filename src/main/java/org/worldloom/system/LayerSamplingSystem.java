@@ -2,7 +2,6 @@ package org.worldloom.system;
 
 import com.artemis.annotations.All;
 import com.artemis.annotations.Exclude;
-import com.artemis.systems.IteratingSystem;
 import com.badlogic.gdx.graphics.g2d.Animation;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.maps.tiled.tiles.AnimatedTiledMapTile;
@@ -12,11 +11,10 @@ import net.mostlyoriginal.api.plugin.extendedcomponentmapper.M;
 import org.worldloom.component.*;
 import org.worldloom.component.Inert;
 import org.worldloom.utils.SamplingUtils;
-import org.worldloom.render.MapVisibility;
 
 @All({LayerSampling.class, Render.class, Pos.class})
 @Exclude(Inert.class)
-public class LayerSamplingSystem extends IteratingSystem {
+public class LayerSamplingSystem extends ViewedMapIteratingSystem {
     private TiledMapSystem tiledMapSystem;
 
     private M<Render> mRender;
@@ -31,10 +29,7 @@ public class LayerSamplingSystem extends IteratingSystem {
 
     /** 图层采样属于观察图表现资源，进入该图时才创建，避免串图和后台显存开销。 */
     @Override
-    protected void process(int entityId) {
-        if (!MapVisibility.inViewedMap(world, entityId)) {
-            return;
-        }
+    protected void processViewed(int entityId) {
         LayerSampling sampling = mSampling.get(entityId);
 
         //采样完成

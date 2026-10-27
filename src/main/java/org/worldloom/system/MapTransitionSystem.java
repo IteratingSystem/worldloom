@@ -58,7 +58,7 @@ public class MapTransitionSystem extends BaseSystem {
     /** 保存门目标的值，避免接触回调结束后组件被修改导致请求串图。 */
     private record PortalRequest(String mapId, String targetTag, int[] entityIds, int playerId, boolean switchMap) { }
 
-    /** 主线程安全点直接迁移一个常驻实体；世界锁定或落点无效时返回false供业务重试。 */
+    /** 安全点迁移常驻实体：同图仅改位置，跨图才替换原生Body；失败保留原状态。 */
     public boolean transfer(int entityId, String targetMap, float x, float y) {
         if (!world.getSystem(B2dSystem.class).isResidentMode())
             throw new IllegalStateException("显式实体迁移需要启用常驻地图");
@@ -147,7 +147,9 @@ public class MapTransitionSystem extends BaseSystem {
                         throw new IllegalArgumentException("目标落点被实体或地形阻挡");
                 }
             }
-            for (int id : entityIds) if (bodies.has(id) && bodies.get(id).body != null)
+            // 只有跨物理World才替换Body；同图传送保留原Body和Fixture。
+            for (int id : entityIds) if (bodies.has(id) && bodies.get(id).body != null
+                && bodies.get(id).b2dWorld != destination)
                 prepared.add(bodies.get(id).prepareTransfer(destination, landings.get(id).x, landings.get(id).y));
         } catch (RuntimeException exception) {
             for (B2dBody.PreparedTransfer transfer : prepared) transfer.rollback();
@@ -163,6 +165,12 @@ public class MapTransitionSystem extends BaseSystem {
             membership.mapId = targetMap;
             VectorLanding landing = landings.get(id);
             positions.get(id).set(landing.x, landing.y);
+            if (bodies.has(id) && bodies.get(id).body != null) {
+                B2dBody body = bodies.get(id);
+                body.setPos(positions.get(id));
+                body.body.setLinearVelocity(0f, 0f);
+                body.body.setAngularVelocity(0f);
+            }
             identities.refresh(id);
             if (navigation != null) navigation.cancel(id);
         }

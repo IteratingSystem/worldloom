@@ -223,8 +223,8 @@ public class EntitySerializer {
 
     /** 实例化已明确归属的模板，常驻模式拒绝把素材来源或观察图当作出生地图。 */
     public static int buildEntity(World world, EntityDatum entityDatum) {
-        if (!Worldloom.config().getResidentMaps().isEmpty()) {
-            if (entityDatum.mapId == null || !Worldloom.config().getResidentMaps().contains(entityDatum.mapId, false))
+        if (Worldloom.config().isResidentMode()) {
+            if (entityDatum.mapId == null || !Worldloom.config().isResidentMap(entityDatum.mapId))
                 throw new IllegalArgumentException("常驻动态实体必须显式指定正式出生地图");
             return buildEntity(world, entityDatum, entityDatum.mapId);
         }
@@ -235,6 +235,7 @@ public class EntitySerializer {
 
     /** 在明确目标地图动态生成新实例，始终分配新身份，不抢占模板局部名称。 */
     public static int buildEntity(World world, EntityDatum source, String mapId) {
+        Worldloom.config().requireRuntimeMap(mapId);
         EntityDatum spawn = copyEntityDatum(source);
         spawn.mapId = mapId;
         spawn.entityKey = "spawn:" + UUID.randomUUID();
@@ -246,6 +247,7 @@ public class EntitySerializer {
 
     /** 恢复联机传来的单实体快照，保留其身份并显式指定当前地图。 */
     public static int restoreEntity(World world, EntityDatum source, String mapId) {
+        Worldloom.config().requireRuntimeMap(mapId);
         EntityDatum saved = copyEntityDatum(source);
         saved.mapId = mapId;
         EntityData batch = new EntityData();
@@ -519,6 +521,7 @@ public class EntitySerializer {
 
     /** 复制每图快照并附上当前归属，不覆盖不可变的fromMap来源。 */
     private static void appendMap(EntityData batch, EntityData source, String mapId) {
+        Worldloom.config().requireRuntimeMap(mapId);
         if (source == null) return;
         for (EntityDatum saved : source) {
             EntityDatum copy = copyEntityDatum(saved);
@@ -529,6 +532,11 @@ public class EntitySerializer {
 
     /** 全部字段就绪后才加载资源，最后启动状态机；失败时撤销本批实体。 */
     private static Array<EntityDatum> restoreBatch(World world, EntityData source) {
+        // 整批先验证，模板或错误目标不能在失败前创建半个ECS/资源。
+        for (EntityDatum saved : source) {
+            String mapId = saved.mapId == null || saved.mapId.isBlank() ? saved.fromMap : saved.mapId;
+            if (mapId != null && !mapId.isBlank()) Worldloom.config().requireRuntimeMap(mapId);
+        }
         Array<EntityDatum> runtime = new Array<>(source.size);
         Map<Integer, Integer> restoredIds = new HashMap<>();
         MapIdentitySystem identities = world.getSystem(MapIdentitySystem.class);
@@ -567,15 +575,14 @@ public class EntitySerializer {
 
     /** 将运行元数据写入归属组件；明确实例化参数优先于镜像里的模板值。 */
     private static void restoreIdentity(World world, EntityDatum entity) {
-        boolean resident = !Worldloom.config().getResidentMaps().isEmpty();
+        boolean resident = Worldloom.config().isResidentMode();
         if (!resident && !world.getMapper(MapMembership.class).has(entity.entityId)) return;
         MapMembership membership = world.getMapper(MapMembership.class).create(entity.entityId);
         PersistentIdentity identity = world.getMapper(PersistentIdentity.class).create(entity.entityId);
         String mapId = entity.mapId;
         if (mapId == null || mapId.isBlank()) mapId = membership.mapId;
         if (mapId == null || mapId.isBlank()) mapId = entity.fromMap;
-        if (mapId == null || mapId.isBlank() || (resident && !Worldloom.config().getResidentMaps().contains(mapId, false)))
-            throw new IllegalArgumentException("实体缺少正式地图归属：" + entity.name + " / " + mapId);
+        Worldloom.config().requireRuntimeMap(mapId);
         membership.mapId = mapId;
         membership.localTag = entity.name == null ? "" : entity.name;
         String key = entity.entityKey;

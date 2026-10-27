@@ -87,7 +87,7 @@ public class GameSnapshotManager {
         TiledMapSystem tiledMapSystem = world.getSystem(TiledMapSystem.class);
         String currentMap = tiledMapSystem.getCurrent();
         gameSnapshot.curtMap = currentMap;
-        if (Worldloom.config().getResidentMaps().isEmpty()) {
+        if (!Worldloom.config().isResidentMode()) {
             gameSnapshot.entityData.put(currentMap, EntitySerializer.createEntityData(world));
         } else {
             ObjectMap<String, EntityData> grouped = new ObjectMap<>();

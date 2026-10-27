@@ -1499,6 +1499,37 @@ WorldloomConfig.builder()
 - `observe(mapId, playerId)`只切本机视图及相机；`transferAuthoritative`供已验证的主机复制，跳过客户端动态落点碰撞差异但仍保留资源准备与归属校验，调用者负责应用主机mapEpoch。不要暴露给未经校验的客户端命令。
 - 保存按MapMembership覆盖全图快照（包括空图），全图恢复后通过稳定key解析Owner/User等实体引用。正常切图不捕获离图镜像、不删除场景实体；退出会话统一释放各图物理与组件原生资源。
 
+### 地图用途与表现过滤（4.10.0）
+
+新项目或全图常驻项目推荐按用途推导目录，不再同时维护一份场景白名单：
+
+```java
+import org.worldloom.map.MapRole;
+
+WorldloomConfig.builder()
+    .initialMap("island")
+    .residentMapsByRole()
+    .entityLayer("island", "ENTITY")
+    .entityLayer("house", "ENTITY")
+    .entityLayer("items", "ENTITY")
+    .entityLayer("prefab", "ENTITY")
+    .mapRole("items", MapRole.TEMPLATE)
+    .mapRole("prefab", MapRole.TEMPLATE)
+    .physicsLayers("island", "SEA")
+    .physicsLayers("house", "WALL")
+    .build();
+```
+
+- 默认用途为`MapRole.WORLD`。开启`residentMapsByRole()`后，所有配置了实体层的WORLD图常驻；新增房间只维护实体层及所需物理/导航配置。用途在build时统一解析，不依赖配置调用顺序。
+- TEMPLATE图仍由MapManager读取、保留原型并可从库存/预制件复制，**整张模板不生成ECS实体、不创建Box2D World、不参加世界存档捕获**，无需每个逻辑系统再查黑名单。模板数据仍随会话快照保留，避免丢失物品定义。
+- 模板不能作为初始图、常驻成员、观察图、跨门目的地或物理/导航场景。EntityBuilder/EntitySerializer在创建资源前拒绝将模板作为运行归属；显式复制模板到WORLD图正常工作，`fromMap`仍可指向模板来源。
+- 原`residentMaps(...)`及默认单图模式保留；同一Builder最后一次目录选择决定使用显式名单还是用途推导，显式名单也不能混入模板。`getMapRole(mapId)`查用途，`isResidentMap(mapId)`零分配查成员；仅遍历目录时用返回副本的`getResidentMaps()`。
+- 纯表现逐实体系统可继承`ViewedMapIteratingSystem`，把本图更新放入`processViewed(id)`，离图需停用的资源放入`processOutsideView(id)`。原Artemis的`@All/@Exclude`或显式Aspect保持有效，final分派统一调用MapVisibility，不逐帧反射注解。LayerSamplingSystem和PointLightSystem已接入；灯光离图仍立即停用。
+- 该基类只简化纯表现系统。生命、持续效果、AI、动画时钟继续继承普通ECS系统并全图更新；同图攻击/交互用`MapIdentitySystem.sameMap`，不能用观察图过滤替代。混合绘制队列、事件、固定坐标音源继续在各自边界调用MapVisibility。
+- `MapIdentitySystem.getMapId(entityId)`统一归属解析：常驻缺归属立即报错，只有旧单图实体才回退观察图；避免业务系统各自复制回退逻辑。
+
+物理生命周期：每图World和静态场景Body在切换观察图时保持原对象。同图`transfer`只改位置/清速度，保留原Body与Fixture；真正跨图时由于Box2D的Body不能移交World，只替换迁移实体的原生Body，ECS及业务组件不变。常驻模式拒绝旧`delAllCollider()`整图销毁入口，防止组件持有已销毁Body；瓦片碰撞显式编辑事件仍可按图重建静态层。
+
 ### 持续效果的保存边界
 
 `DebuffSystem`保存稳定身份关联的效果DTO，包括名称、remaining、tickElapsed及data。恢复只调用`DebuffHandler.onRestored`重建临时修饰器，不重复`onApplied`。游戏可用`shouldUpdate(context)`禁止复制代理自行结算权威伤害；同一主机全部地图仍正常推进。周期处理每帧最多32次，剩余债务保留到后续帧，回调内治疗/清除不会继续触发已移除效果。

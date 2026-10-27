@@ -57,7 +57,7 @@ public class EntityFactory extends BaseSystem {
     }
     /** 常驻会话统一分配全部正式地图实体，模板地图仅供后续显式实例化。 */
     private void buildAll(){
-        if (Worldloom.config().getResidentMaps().isEmpty()) {
+        if (!Worldloom.config().isResidentMode()) {
             EntityBuilder.buildEntities(world,tiledMapSystem.getCurrent());
             return;
         }

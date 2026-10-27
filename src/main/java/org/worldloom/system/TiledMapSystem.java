@@ -44,11 +44,15 @@ public class TiledMapSystem extends BaseSystem {
     public String getCurrent(){
         return current;
     }
+    /** 只修改观察图标识；先拒绝模板和非法目标，失败不污染当前图。 */
     public void changeCurrent(String current){
+        org.worldloom.Worldloom.config().requireRuntimeMap(current);
         this.current = current;
     }
 
+    /** 常驻模式仅重绑观察资源；旧单图模式才重建目标瓦片碰撞。 */
     private void changeMap(String mapName){
+        org.worldloom.Worldloom.config().requireRuntimeMap(mapName);
         if (!b2dSystem.isResidentMode()) b2dSystem.delTileCollider();
         changeCurrent(mapName);
         renderTiledSystem.changeMap();

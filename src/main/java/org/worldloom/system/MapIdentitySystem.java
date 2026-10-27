@@ -51,6 +51,18 @@ public final class MapIdentitySystem extends BaseEntitySystem {
         return sameMap(sourceId, global) ? global : -1;
     }
 
+    /** 统一取得实体运行图；只有旧单图无归属实体可回退到观察图，常驻缺归属立即报错。 */
+    public String getMapId(int entityId) {
+        MapMembership membership = world.getMapper(MapMembership.class).get(entityId);
+        if (membership != null && membership.mapId != null && !membership.mapId.isBlank()) {
+            Worldloom.config().requireRuntimeMap(membership.mapId);
+            return membership.mapId;
+        }
+        if (Worldloom.config().isResidentMode())
+            throw new IllegalStateException("常驻实体缺少地图归属：" + entityId);
+        return world.getSystem(TiledMapSystem.class).getCurrent();
+    }
+
     /** 比较两个已建立地图归属的实体，不将两个缺少归属的实体视为同图。 */
     public boolean sameMap(int firstId, int secondId) {
         if (firstId < 0 || secondId < 0) return false;

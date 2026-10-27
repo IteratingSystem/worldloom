@@ -41,7 +41,7 @@ public class B2dSystem extends BaseSystem {
 
     /** 配置常驻图时一次创建全部物理环境；模板图不会进入此目录。 */
     @Override protected void initialize() {
-        Array<String> maps = new Array<>(Worldloom.config().getResidentMaps());
+        Array<String> maps = Worldloom.config().getResidentMaps();
         if (maps.isEmpty()) maps.add(tiledMapSystem.getCurrent());
         for (String mapId : maps) {
             if (tiledMapSystem.getTiledMap(mapId) == null)
@@ -67,6 +67,7 @@ public class B2dSystem extends BaseSystem {
 
     /** 取得地图物理环境，常驻模式禁止把未知地图误映射到观察图。 */
     public World getWorld(String mapId) {
+        Worldloom.config().requireRuntimeMap(mapId);
         if (!isResidentMode()) return box2DWorld;
         World physics = mapWorlds.get(mapId);
         if (physics == null) throw new IllegalArgumentException("未注册的物理地图: " + mapId);
@@ -121,8 +122,9 @@ public class B2dSystem extends BaseSystem {
         if (mapId.equals(tiledMapSystem.getCurrent())) tileCollider = colliders;
     }
 
-    /** 旧单图清理入口，只针对当前观察图，不改变其它常驻地图。 */
+    /** 仅供旧单图重建使用；常驻模式拒绝整图销毁，避免悬空的B2dBody引用。 */
     public void delAllCollider() {
+        if (isResidentMode()) throw new IllegalStateException("常驻地图禁止整图删除物理身体；实体销毁请走B2dBody生命周期");
         World physics = getWorld(tiledMapSystem.getCurrent());
         if (physics.isLocked()) throw new IllegalStateException("物理步进期间不能清理碰撞");
         Array<Body> bodies = new Array<>(); physics.getBodies(bodies);
