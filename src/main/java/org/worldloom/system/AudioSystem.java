@@ -1,5 +1,8 @@
 package org.worldloom.system;
 
+import org.worldloom.render.MapVisibility;
+import org.worldloom.component.MapMembership;
+
 import com.artemis.BaseSystem;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.audio.Music;
@@ -65,6 +68,7 @@ public class AudioSystem extends BaseSystem {
         }
     }
 
+    /** 正常推进播放、淡入淡出和回收，地图隔离只影响最终音量。 */
     @Override
     protected void processSystem() {
         Long completedHandle;
@@ -76,17 +80,15 @@ public class AudioSystem extends BaseSystem {
         List<Long> toRemove = new ArrayList<>();
         for (AudioInstance instance : instances.values()) {
             if (instance.sourceEntityId >= 0) {
-                if (!world.getEntityManager().isActive(instance.sourceEntityId)
-                    || !mPos.has(instance.sourceEntityId)) {
+                if (!updateSourceFromEntity(instance)) {
                     if (instance.looping || instance.music != null) {
                         instance.stop();
                         toRemove.add(instance.handle);
+                        continue;
                     }
-                    continue;
+                    // 一次音效在源实体消失后保留最后位置与地图，并继续正常计时回收。
+                    instance.sourceEntityId = -1;
                 }
-                Pos pos = mPos.get(instance.sourceEntityId);
-                instance.x = pos.x;
-                instance.y = pos.y;
             }
 
             updateIntervalLoop(instance, delta);
@@ -253,6 +255,7 @@ public class AudioSystem extends BaseSystem {
         instance.x = event.x;
         instance.y = event.y;
         instance.sourceEntityId = event.sourceEntityId;
+        instance.mapId = event.mapId;
         instance.minDistance = event.minDistance >= 0f
             ? event.minDistance : config.getDefaultMinDistance();
         instance.maxDistance = event.maxDistance >= 0f
@@ -370,6 +373,7 @@ public class AudioSystem extends BaseSystem {
         applyInstanceVolume(instance);
     }
 
+    /** 将声源固定到新位置，显式指定地图时同步更新其可听归属。 */
     private void move(AudioEvent event) {
         AudioInstance instance = instances.get(event.handle);
         if (instance == null) {
@@ -377,6 +381,7 @@ public class AudioSystem extends BaseSystem {
         }
         instance.spatial = true;
         instance.sourceEntityId = -1;
+        if (event.mapId != null) instance.mapId = event.mapId;
         instance.x = event.x;
         instance.y = event.y;
         applyInstanceVolume(instance);
@@ -512,6 +517,7 @@ public class AudioSystem extends BaseSystem {
         }
     }
 
+    /** 跟随实体坐标与地图；实体销毁后一次音效可保留最后一帧的声源归属。 */
     private boolean updateSourceFromEntity(AudioInstance instance) {
         if (instance.sourceEntityId < 0) {
             return true;
@@ -521,6 +527,8 @@ public class AudioSystem extends BaseSystem {
             Pos pos = mPos.get(instance.sourceEntityId);
             instance.x = pos.x;
             instance.y = pos.y;
+            MapMembership membership = world.getMapper(MapMembership.class).get(instance.sourceEntityId);
+            if (membership != null) instance.mapId = membership.mapId;
             return true;
         }
         return false;
@@ -552,7 +560,15 @@ public class AudioSystem extends BaseSystem {
         }
     }
 
+    /** 按距离与地图归属计算音量；离图的跟随音源静音，返回后可继续播放。 */
     private VolumePan calculateVolumePan(AudioInstance instance) {
+        if (!MapVisibility.inViewedMap(world, instance.mapId)) {
+            return new VolumePan(0f, 0f);
+        }
+        if (instance.spatial && instance.sourceEntityId >= 0
+            && !MapVisibility.inViewedMap(world, instance.sourceEntityId)) {
+            return new VolumePan(0f, 0f);
+        }
         float attenuation = 1f;
         float pan = 0f;
         if (instance.spatial) {
@@ -645,6 +661,7 @@ public class AudioSystem extends BaseSystem {
         private boolean intervalLooping;
         private boolean spatial;
         private int sourceEntityId;
+        private String mapId;
         private float x;
         private float y;
         private float minDistance;

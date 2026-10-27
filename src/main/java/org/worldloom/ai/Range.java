@@ -5,6 +5,7 @@ import com.artemis.Entity;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.ai.btree.annotation.TaskAttribute;
 import org.worldloom.component.Pos;
+import org.worldloom.system.MapIdentitySystem;
 
 /**
  * @Auther WenLong
@@ -20,12 +21,11 @@ public class Range extends EcsLeafTask {
     @TaskAttribute
     public float radius = 0;
 
+    /** 只比较实体所在地图内的目标距离，跨地图相同坐标不算进入范围。 */
     @Override
     public Status execute() {
-        if (!tagManager.isRegistered(targetEntityTag)) {
-            Gdx.app.error(getTAG(),"entityTag is not registered:tagName:"+targetEntityTag);
-            return Status.FAILED;
-        }
+        int targetId = world.getSystem(MapIdentitySystem.class).resolveLocal(entityId, targetEntityTag);
+        if (targetId < 0) return Status.FAILED;
 
         ComponentMapper<Pos> mPos = world.getMapper(Pos.class);
         if (!mPos.has(entity)) {
@@ -33,7 +33,7 @@ public class Range extends EcsLeafTask {
             return Status.FAILED;
         }
 
-        Entity target = tagManager.getEntity(targetEntityTag);
+        Entity target = world.getEntity(targetId);
         if (!mPos.has(target)) {
             Gdx.app.error(getTAG(),"Target entity entity is not has 'Pos' component!Entity tag:"+targetEntityTag);
             return Status.FAILED;

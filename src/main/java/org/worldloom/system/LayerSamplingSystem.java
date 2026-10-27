@@ -12,6 +12,7 @@ import net.mostlyoriginal.api.plugin.extendedcomponentmapper.M;
 import org.worldloom.component.*;
 import org.worldloom.component.Inert;
 import org.worldloom.utils.SamplingUtils;
+import org.worldloom.render.MapVisibility;
 
 @All({LayerSampling.class, Render.class, Pos.class})
 @Exclude(Inert.class)
@@ -28,8 +29,12 @@ public class LayerSamplingSystem extends IteratingSystem {
         super.initialize();
     }
 
+    /** 图层采样属于观察图表现资源，进入该图时才创建，避免串图和后台显存开销。 */
     @Override
     protected void process(int entityId) {
+        if (!MapVisibility.inViewedMap(world, entityId)) {
+            return;
+        }
         LayerSampling sampling = mSampling.get(entityId);
 
         //采样完成

@@ -16,14 +16,70 @@ import org.worldloom.debuff.DebuffState;
 import org.worldloom.event.DebuffEvent;
 
 /** 按名称管理Debuff的添加、计时、周期触发和自动移除。 */
+@org.worldloom.serialize.SerializeSystem
 @All(Debuffs.class)
-public final class DebuffSystem extends IteratingSystem {
+public final class DebuffSystem extends IteratingSystem implements org.worldloom.serialize.SystemSnapshotLifecycle {
     private static final String TAG = DebuffSystem.class.getSimpleName();
     private static final int MAX_TICKS_PER_FRAME = 32;
 
     private final ObjectMap<String, DebuffHandler> handlers = new ObjectMap<>();
     private final IntMap<Array<DebuffState>> runtimeStates = new IntMap<>();
+    private final Array<DebuffState> frameStates = new Array<>();
     private ComponentMapper<Debuffs> mDebuffs;
+    @org.worldloom.serialize.SerializeParam
+    public Array<EffectSnapshot> savedEffects = new Array<>();
+    private boolean pendingRestore;
+
+    /** 效果存档记录仅在保存/恢复边界使用，按稳定实体身份关联。 */
+    public static final class EffectSnapshot {
+        public String entityKey;
+        public String name;
+        public float remaining;
+        public float tickElapsed;
+        public String data;
+    }
+
+    /** 只捕获真实计时状态，不在每帧生成另一份权威数据。 */
+    @Override public void beforeSnapshot() {
+        Array<EffectSnapshot> result = new Array<>();
+        for (IntMap.Entry<Array<DebuffState>> entry : runtimeStates) {
+            org.worldloom.component.PersistentIdentity identity = world.getMapper(org.worldloom.component.PersistentIdentity.class).get(entry.key);
+            if (identity == null) continue;
+            for (DebuffState state : entry.value) {
+                EffectSnapshot item = new EffectSnapshot();
+                item.entityKey = identity.entityKey; item.name = state.name;
+                item.remaining = state.remaining; item.tickElapsed = state.tickElapsed; item.data = state.data;
+                result.add(item);
+            }
+        }
+        savedEffects = result;
+    }
+
+    /** 等实体加载屏障结束后再解析稳定身份，避免初始化阶段寻找半成品实体。 */
+    @Override public void afterSnapshotRestore() { pendingRestore = true; }
+
+    /** 恢复周期余量与剩余时间，不重放首次施加副作用。 */
+    @Override protected void begin() {
+        if (!pendingRestore) return;
+        pendingRestore = false;
+        runtimeStates.clear();
+        if (savedEffects == null) return;
+        MapIdentitySystem identities = world.getSystem(MapIdentitySystem.class);
+        for (EffectSnapshot item : savedEffects) {
+            int id = identities.resolve(item.entityKey);
+            if (id < 0 || !mDebuffs.has(id) || !mDebuffs.get(id).has(item.name)) continue;
+            if (!Float.isFinite(item.remaining) || !Float.isFinite(item.tickElapsed) || item.tickElapsed < 0)
+                throw new IllegalArgumentException("无效的效果计时快照");
+            DebuffHandler handler = handlers.get(item.name);
+            if (handler == null) continue;
+            DebuffState state = new DebuffState();
+            state.name = item.name; state.remaining = item.remaining; state.tickElapsed = item.tickElapsed;
+            state.data = item.data == null ? "" : item.data; state.activated = true;
+            states(id).add(state);
+            handler.onRestored(context(id, state));
+        }
+        savedEffects = new Array<>();
+    }
 
     /** 注册具体Debuff定义；持续时间、周期和行为均由定义自身提供。 */
     public void registerHandler(String name, DebuffHandler handler) {
@@ -44,7 +100,7 @@ public final class DebuffSystem extends IteratingSystem {
             && mDebuffs.get(entityId).has(name);
     }
 
-    /** 获取当前会话中的计时状态；读档后该状态会重新开始。 */
+    /** 获取当前效果的真实计时状态，切图及读档保留剩余时间。 */
     public DebuffState get(int entityId, String name) {
         if (!has(entityId, name)) {
             return null;
@@ -75,26 +131,33 @@ public final class DebuffSystem extends IteratingSystem {
         synchronize(entityId, debuffs, states);
 
         float delta = Math.max(0f, world.getDelta());
-        for (int i = states.size - 1; i >= 0; i--) {
-            DebuffState state = states.get(i);
+        frameStates.clear(); frameStates.addAll(states);
+        for (int i = frameStates.size - 1; i >= 0; i--) {
+            DebuffState state = frameStates.get(i);
+            if (!states.contains(state, true) || !debuffs.has(state.name)) continue;
             DebuffHandler handler = handlers.get(state.name);
+            if (handler != null && !handler.shouldUpdate(context(entityId, state))) continue;
             if (handler != null && !state.activated) {
                 state.activated = true;
                 handler.onApplied(context(entityId, state));
             }
+            if (!states.contains(state, true) || !debuffs.has(state.name)) continue;
 
             float activeDelta = state.isPermanent()
                 ? delta : Math.min(delta, Math.max(0f, state.remaining));
             if (handler != null) {
                 DebuffContext context = context(entityId, state);
                 handler.onUpdate(context, activeDelta);
+                if (!states.contains(state, true) || !debuffs.has(state.name)) continue;
                 triggerTicks(handler, context, state, activeDelta);
             }
 
+            if (!states.contains(state, true) || !debuffs.has(state.name)) continue;
             if (!state.isPermanent()) {
-                state.remaining -= delta;
-                if (state.remaining <= 0f) {
-                    states.removeIndex(i);
+                state.remaining = Math.max(0, state.remaining - delta);
+                float interval = handler == null ? 0 : handler.getTickInterval();
+                if (state.remaining <= 0f && (interval <= 0 || state.tickElapsed < interval)) {
+                    states.removeValue(state, true);
                     debuffs.effects.removeValue(state.name, false);
                     notifyRemoved(entityId, state,
                         DebuffRemovalReason.EXPIRED);
@@ -110,7 +173,7 @@ public final class DebuffSystem extends IteratingSystem {
 
     private void synchronize(int entityId, Debuffs debuffs,
                              Array<DebuffState> states) {
-        for (int i = states.size - 1; i >= 0; i--) {
+        for (int i = states.size - 1; i >= 0; i = Math.min(i - 1, states.size - 1)) {
             DebuffState state = states.get(i);
             if (!debuffs.has(state.name)) {
                 states.removeIndex(i);
@@ -184,12 +247,9 @@ public final class DebuffSystem extends IteratingSystem {
             state.tickElapsed -= interval;
             handler.onTick(context);
             tickCount++;
+            if (!has(context.getEntityId(), state.name) || !states(context.getEntityId()).contains(state, true)) break;
         }
-        if (tickCount == MAX_TICKS_PER_FRAME
-            && state.tickElapsed >= interval) {
-            state.tickElapsed %= interval;
-            Gdx.app.error(TAG, "Debuff tick overflow: " + state.name);
-        }
+
     }
 
     private void remove(int entityId, String name,
@@ -219,10 +279,9 @@ public final class DebuffSystem extends IteratingSystem {
         if (states == null) {
             return;
         }
-        for (int i = states.size - 1; i >= 0; i--) {
-            DebuffState state = states.removeIndex(i);
-            notifyRemoved(entityId, state, DebuffRemovalReason.CLEARED);
-        }
+        Array<DebuffState> removed = new Array<>(states);
+        states.clear();
+        for (DebuffState state : removed) notifyRemoved(entityId, state, DebuffRemovalReason.CLEARED);
     }
 
     private void notifyRemoved(int entityId, DebuffState state,

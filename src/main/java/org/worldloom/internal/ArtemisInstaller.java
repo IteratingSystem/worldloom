@@ -37,6 +37,7 @@ import org.worldloom.system.KeyframeShapeSystem;
 import org.worldloom.system.LayerSamplingSystem;
 import org.worldloom.system.LightSystem;
 import org.worldloom.system.MapTransitionSystem;
+import org.worldloom.system.MapIdentitySystem;
 import org.worldloom.system.NavigationSystem;
 import org.worldloom.system.OnInteractSystem;
 import org.worldloom.system.PointLightSystem;
@@ -90,6 +91,7 @@ public final class ArtemisInstaller {
         builder.dependsOn(WorldSerializationManager.class);
         builder.with(new EventSystem(
             new FastEventDispatcher(), new SubscribeAnnotationFinder()));
+        builder.with(new MapIdentitySystem());
 
         builder.with(new AssetSystem(config.getSkinPath()));
         String currentMap = GameSnapshotManager.getInstance().getCurrentMap();
@@ -98,6 +100,7 @@ public final class ArtemisInstaller {
             config.getEntityLayers(),
             config.getPhysicsLayers(),
             config.getHiddenLayers()));
+        add(builder, gameSystems.systemsFor(EnginePhase.PRE_PHYSICS));
         builder.with(new B2dSystem(
             config.getGravityX(),
             config.getGravityY(),

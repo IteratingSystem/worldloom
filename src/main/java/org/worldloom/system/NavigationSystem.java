@@ -19,6 +19,7 @@ import org.worldloom.component.B2dBody;
 import org.worldloom.component.Inert;
 import org.worldloom.component.NavigationAgent;
 import org.worldloom.component.Pos;
+import org.worldloom.component.MapMembership;
 import org.worldloom.event.B2dEvent;
 import org.worldloom.navigation.NavigationGrid;
 import org.worldloom.navigation.NavigationHeuristic;
@@ -26,9 +27,9 @@ import org.worldloom.navigation.NavigationNode;
 import org.worldloom.navigation.NavigationStatus;
 
 /**
- * 为当前地图建立导航网格，并通过Box2D速度执行导航。
+ * 为每张地图建立独立导航网格，并通过Box2D速度执行导航。
  *
- * <p>A*仅在收到请求时运行，不会逐帧重复寻路。地图切换后缓存会自动失效。</p>
+ * <p>A*仅在收到请求时运行，不会逐帧重复寻路。仅静态碰撞改变时失效对应地图缓存。</p>
  */
 @All({NavigationAgent.class, Pos.class, B2dBody.class})
 @Exclude(Inert.class)
@@ -39,15 +40,14 @@ public class NavigationSystem extends IteratingSystem {
     private final ObjectMap<String, String> roadLayerNames;
     private final float roadCost;
     private final float offRoadCost;
-    private final IntMap<NavigationProfile> profilesByClearance = new IntMap<>();
+    private final ObjectMap<String, IntMap<NavigationProfile>> profilesByMap = new ObjectMap<>();
     private final NavigationHeuristic heuristic;
     private M<NavigationAgent> mNavigationAgent;
     private M<Pos> mPos;
     private M<B2dBody> mB2dBody;
     private TiledMapSystem tiledMapSystem;
     private B2dSystem b2dSystem;
-    private String gridMapName;
-    private TiledMapTileLayer currentRoadLayer;
+    private String legacyMapName;
     private int nextRequestId = 1;
 
     public NavigationSystem(float worldScale) {
@@ -89,6 +89,7 @@ public class NavigationSystem extends IteratingSystem {
     public int navigate(int entityId, float targetX, float targetY,
                         float stopDistance) {
         refreshMapIfNeeded();
+        String mapId = mapFor(entityId);
         if (!mPos.has(entityId) || !mB2dBody.has(entityId)) {
             Gdx.app.error(TAG, "Entity is missing Pos or B2dBody: " + entityId);
             return -1;
@@ -101,7 +102,7 @@ public class NavigationSystem extends IteratingSystem {
         agent.targetX = targetX;
         agent.targetY = targetY;
         agent.stopDistance = Math.max(0f, stopDistance);
-        agent.pathMapName = gridMapName;
+        agent.pathMapName = mapId;
         agent.path.clear();
         agent.nextWaypoint = 0;
 
@@ -119,7 +120,7 @@ public class NavigationSystem extends IteratingSystem {
             return requestId;
         }
 
-        NavigationProfile profile = profileFor(agent.radius);
+        NavigationProfile profile = profileFor(mapId, agent.radius);
         NavigationGrid grid = profile.grid;
         NavigationNode start = grid.getNodeAt(pos.x, pos.y);
         NavigationNode end = grid.getNodeAt(targetX, targetY);
@@ -170,15 +171,18 @@ public class NavigationSystem extends IteratingSystem {
 
     /** 静态Fixture在当前地图内发生增删后，使导航图在下次请求时重建。 */
     public void invalidate() {
-        profilesByClearance.clear();
+        profilesByMap.clear();
         Gdx.app.debug(TAG, "Navigation grids invalidated");
     }
+
+    /** 仅清理发生静态碰撞变更的地图，其它地图缓存保持可用。 */
+    public void invalidate(String mapId) { profilesByMap.remove(mapId); }
 
     @Subscribe
     public void onEvent(B2dEvent event) {
         if (event.type == B2dEvent.DEL_TILE_COLLIDER
             || event.type == B2dEvent.CREATE_TILE_COLLIDER) {
-            invalidate();
+            invalidate(event.mapId == null ? tiledMapSystem.getCurrent() : event.mapId);
         }
     }
 
@@ -193,7 +197,7 @@ public class NavigationSystem extends IteratingSystem {
         if (agent.status != NavigationStatus.MOVING) {
             return;
         }
-        if (!gridMapName.equals(agent.pathMapName)) {
+        if (!mapFor(entityId).equals(agent.pathMapName)) {
             fail(entityId, agent, "Navigation path belongs to a different map");
             return;
         }
@@ -238,28 +242,38 @@ public class NavigationSystem extends IteratingSystem {
         body.setLinearVelocity(dx * velocityScale, dy * velocityScale);
     }
 
-    private NavigationProfile profileFor(float clearance) {
+    /** 根据实体归属选图，离开观察图不会中断导航。 */
+    private String mapFor(int entityId) {
+        MapMembership membership = world.getMapper(MapMembership.class).get(entityId);
+        if (membership == null && b2dSystem.isResidentMode())
+            throw new IllegalStateException("导航实体缺少地图归属: " + entityId);
+        return membership == null ? tiledMapSystem.getCurrent() : membership.mapId;
+    }
+
+    /** 同地图同净空共享导航网格，不同地图的像素坐标互不混用。 */
+    private NavigationProfile profileFor(String mapId, float clearance) {
+        IntMap<NavigationProfile> profiles = profilesByMap.get(mapId);
+        if (profiles == null) { profiles = new IntMap<>(); profilesByMap.put(mapId, profiles); }
         int key = Float.floatToIntBits(clearance);
-        NavigationProfile profile = profilesByClearance.get(key);
+        NavigationProfile profile = profiles.get(key);
         if (profile == null) {
             NavigationGrid grid = NavigationGrid.fromBox2D(
-                tiledMapSystem.getTiledMap(), b2dSystem.box2DWorld,
-                worldScale, currentRoadLayer, roadCost, offRoadCost, clearance);
+                tiledMapSystem.getTiledMap(mapId), b2dSystem.getWorld(mapId),
+                worldScale, resolveRoadLayer(mapId), roadCost, offRoadCost, clearance);
             profile = new NavigationProfile(grid);
-            profilesByClearance.put(key, profile);
+            profiles.put(key, profile);
         }
         return profile;
     }
 
+    /** 旧单图模式重建同一个物理环境后，清除上张地图的缓存。 */
     private void refreshMapIfNeeded() {
+        if (b2dSystem.isResidentMode()) return;
         String currentMap = tiledMapSystem.getCurrent();
-        if (currentMap.equals(gridMapName)) {
-            return;
+        if (!currentMap.equals(legacyMapName)) {
+            legacyMapName = currentMap;
+            invalidate();
         }
-        gridMapName = currentMap;
-        currentRoadLayer = resolveRoadLayer(currentMap);
-        invalidate();
-        Gdx.app.debug(TAG, "Navigation grids invalidated for map: " + currentMap);
     }
 
     private TiledMapTileLayer resolveRoadLayer(String mapName) {
@@ -267,7 +281,7 @@ public class NavigationSystem extends IteratingSystem {
         if (layerName == null || layerName.isBlank()) {
             return null;
         }
-        TiledMap map = tiledMapSystem.getTiledMap();
+        TiledMap map = tiledMapSystem.getTiledMap(mapName);
         MapLayer layer = map.getLayers().get(layerName);
         if (layer instanceof TiledMapTileLayer tileLayer) {
             return tileLayer;

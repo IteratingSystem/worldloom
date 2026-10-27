@@ -37,6 +37,7 @@ import org.worldloom.light.TopDownShadowConfig;
 import org.worldloom.light.TopDownShadowLight;
 import org.worldloom.light.TopDownSunLight;
 import org.worldloom.manager.ShaderManager;
+import org.worldloom.render.MapVisibility;
 
 import java.nio.IntBuffer;
 
@@ -246,12 +247,13 @@ public class TopDownShadowSystem extends BaseSystem {
         }
     }
 
+    /** 只合成观察图阴影与灯光，保留本图屏外投影者的影响。 */
     @Override
     protected void processSystem() {
         resizeBuffersIfNeeded();
         shadowTime = (shadowTime + Math.min(world.getDelta(), 1f / 15f)) % 1000f;
         synchronizePointLights();
-        boolean hasPointLights = !pointLightSubscription.getEntities().isEmpty();
+        boolean hasPointLights = hasViewedPointLights();
         boolean sunEnabled = config.isSunEnabled(tiledMapSystem.getCurrent());
         if ((!sunEnabled && !hasPointLights)
             || (shadowSubscription.getEntities().isEmpty() && !hasPointLights)) {
@@ -278,7 +280,7 @@ public class TopDownShadowSystem extends BaseSystem {
 
     /** 在环境光合成完成后绘制点光源，避免环境光再次压暗灯光。 */
     void renderPointLightsAfterAmbient() {
-        if (pointLightSubscription.getEntities().isEmpty()) {
+        if (!hasViewedPointLights()) {
             return;
         }
 
@@ -366,7 +368,21 @@ public class TopDownShadowSystem extends BaseSystem {
         return glStateBuffer.get(0);
     }
 
+    /** 只统计观察图开启的光源，后台地图不会触发无意义的灯光合成。 */
+    private boolean hasViewedPointLights() {
+        IntBag entities = pointLightSubscription.getEntities();
+        for (int i = 0; i < entities.size(); i++) {
+            int entityId = entities.get(i);
+            if (MapVisibility.inViewedMap(world, entityId) && mTopDownPointLight.get(entityId).onOff) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 将遮挡世界绑定到观察图，仅为本图创建点光源，避免后台地图污染光照。 */
     private void synchronizePointLights() {
+        pointRayHandler.setWorld(b2dSystem.box2DWorld);
         IntBag entities = pointLightSubscription.getEntities();
         int[] ids = entities.getData();
         for (int i = 0; i < entities.size(); i++) {
@@ -374,6 +390,12 @@ public class TopDownShadowSystem extends BaseSystem {
             Pos pos = mPos.get(entityId);
             org.worldloom.component.TopDownPointLight component =
                 mTopDownPointLight.get(entityId);
+            if (!MapVisibility.inViewedMap(world, entityId)) {
+                if (component.light != null) {
+                    component.light.setActive(false);
+                }
+                continue;
+            }
             if (component.light == null) {
                 component.light = new org.worldloom.light.TopDownPointLight(
                     pointRayHandler, Math.max(3, component.rays), component.color,
@@ -389,6 +411,7 @@ public class TopDownShadowSystem extends BaseSystem {
         }
     }
 
+    /** 合成观察图所有灯光的影响，屏外光源仍可照亮视域内区域。 */
     private void renderPointLights() {
         IntBag entities = pointLightSubscription.getEntities();
         int[] ids = entities.getData();
@@ -396,7 +419,7 @@ public class TopDownShadowSystem extends BaseSystem {
         for (int i = 0; i < entities.size(); i++) {
             org.worldloom.component.TopDownPointLight component =
                 mTopDownPointLight.get(ids[i]);
-            if (!component.onOff || component.light == null) {
+            if (!MapVisibility.inViewedMap(world, ids[i]) || !component.onOff || component.light == null) {
                 continue;
             }
             component.light.setActive(true);
@@ -410,18 +433,21 @@ public class TopDownShadowSystem extends BaseSystem {
             org.worldloom.component.TopDownPointLight component =
                 mTopDownPointLight.get(ids[i]);
             if (component.light != null) {
-                component.light.setActive(component.onOff);
+                component.light.setActive(component.onOff && MapVisibility.inViewedMap(world, ids[i]));
             }
         }
     }
 
+    /** 只排序观察图投影者，保留屏外投影者以允许其阴影进入相机画面。 */
     private void sortShadowEntities() {
         sortedShadowEntities.clear();
         IntBag entities = shadowSubscription.getEntities();
         int[] ids = entities.getData();
         for (int i = 0; i < entities.size(); i++) {
             int entityId = ids[i];
-            sortedShadowEntities.add(entityId);
+            if (MapVisibility.inViewedMap(world, entityId)) {
+                sortedShadowEntities.add(entityId);
+            }
         }
         for (int i = 1; i < sortedShadowEntities.size; i++) {
             int entityId = sortedShadowEntities.get(i);

@@ -7,6 +7,7 @@ import com.badlogic.gdx.ai.btree.annotation.TaskAttribute;
 import org.worldloom.component.Pos;
 import org.worldloom.navigation.NavigationStatus;
 import org.worldloom.system.NavigationSystem;
+import org.worldloom.system.MapIdentitySystem;
 
 /** 让实体沿当前地图的导航网格移动到坐标或带Tag的实体。 */
 public class MoveTo extends EcsLeafTask {
@@ -26,6 +27,7 @@ public class MoveTo extends EcsLeafTask {
     private NavigationSystem navigationSystem;
     private int requestId = -1;
 
+    /** 目标Tag在实体所在图解析，禁止向另一地图的相同坐标导航。 */
     @Override
     public void start() {
         super.start();
@@ -33,12 +35,13 @@ public class MoveTo extends EcsLeafTask {
         float targetX = x;
         float targetY = y;
         if (targetTag != null && !targetTag.isBlank()) {
-            if (!tagManager.isRegistered(targetTag)) {
+            int targetId = world.getSystem(MapIdentitySystem.class).resolveLocal(entityId, targetTag);
+            if (targetId < 0) {
                 Gdx.app.error(getTAG(), "Target tag is not registered: " + targetTag);
                 requestId = -1;
                 return;
             }
-            Entity target = tagManager.getEntity(targetTag);
+            Entity target = world.getEntity(targetId);
             Pos targetPos = target.getComponent(Pos.class);
             if (targetPos == null) {
                 Gdx.app.error(getTAG(), "Target entity has no Pos component: " + targetTag);

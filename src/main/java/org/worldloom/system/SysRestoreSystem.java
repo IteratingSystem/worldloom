@@ -100,6 +100,7 @@ public class SysRestoreSystem extends BaseSystem {
                     Gdx.app.error(TAG, "Failed to restore field: " + p.key + " in " + className, e);
                 }
             }
+            if (target instanceof org.worldloom.serialize.SystemSnapshotLifecycle lifecycle) lifecycle.afterSnapshotRestore();
         }
     }
 }

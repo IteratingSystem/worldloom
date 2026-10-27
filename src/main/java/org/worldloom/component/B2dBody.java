@@ -74,6 +74,8 @@ public class B2dBody extends SerializeComponent implements Disposable {
             body = null;
         }
         
+        disposeKeyframeShapes();
+
         //获取传入参数的属性
         if (!(mapObject instanceof TiledMapTileMapObject tileMapObject)) {
             return;
@@ -92,7 +94,7 @@ public class B2dBody extends SerializeComponent implements Disposable {
         MapObjects objects = tiledMapTile.getObjects();
 
         B2dSystem b2dSystem = world.getSystem(B2dSystem.class);
-        b2dWorld = b2dSystem.box2DWorld;
+        b2dWorld = b2dSystem.getWorldForEntity(entityId);
 
         //构造关键数据
         bodyDef = new BodyDef();
@@ -229,6 +231,7 @@ public class B2dBody extends SerializeComponent implements Disposable {
                 defFixData.listener = ecsContactListener;
 
                 fixture.setUserData(defFixData);
+                shape.dispose();
 
                 continue;
             }
@@ -387,8 +390,83 @@ public class B2dBody extends SerializeComponent implements Disposable {
         return null;
     }
 
+    /** 释放由本组件独立持有的动画形状，不释放Fixture拥有的形状。 */
+    private void disposeKeyframeShapes() {
+        if (keyframeFixSetups == null) return;
+        for (FixtureSetup setup : keyframeFixSetups) setup.FixtureDef.shape.dispose();
+        keyframeFixSetups.clear();
+    }
+
+    /** 预建目标身体但保留源身体；调用方在整批准备成功后统一提交。 */
+    public PreparedTransfer prepareTransfer(World targetWorld, float pixelX, float pixelY) {
+        if (body == null || b2dWorld == null) throw new IllegalStateException("实体没有物理身体");
+        if (b2dWorld.isLocked() || targetWorld.isLocked()) throw new IllegalStateException("物理步进中不能迁移");
+        if (body.getJointList().notEmpty()) throw new IllegalStateException("存在Joint的身体不能独立跨图迁移");
+        BodyDef targetDef = new BodyDef();
+        targetDef.type = body.getType();
+        targetDef.angle = body.getAngle();
+        targetDef.fixedRotation = body.isFixedRotation();
+        targetDef.linearDamping = body.getLinearDamping();
+        targetDef.angularDamping = body.getAngularDamping();
+        targetDef.gravityScale = body.getGravityScale();
+        targetDef.bullet = body.isBullet();
+        targetDef.allowSleep = body.isSleepingAllowed();
+        targetDef.awake = body.isAwake();
+        targetDef.active = false;
+        float scale = Worldloom.config().getWorldScale();
+        targetDef.position.set(pixelX * scale, pixelY * scale);
+        Body target = targetWorld.createBody(targetDef);
+        try {
+            target.setUserData(body.getUserData());
+            for (Fixture fixture : body.getFixtureList()) {
+                FixtureDef def = new FixtureDef();
+                // createFixture会复制形状；这里借用的原Fixture形状不能dispose。
+                def.shape = fixture.getShape();
+                def.density = fixture.getDensity();
+                def.friction = fixture.getFriction();
+                def.restitution = fixture.getRestitution();
+                def.isSensor = fixture.isSensor();
+                def.filter.set(fixture.getFilterData());
+                target.createFixture(def).setUserData(fixture.getUserData());
+            }
+            return new PreparedTransfer(targetWorld, target, body.isActive());
+        } catch (RuntimeException exception) {
+            targetWorld.destroyBody(target);
+            throw exception;
+        }
+    }
+
+    /** 暂存身体只管理物理资源；业务组件和动画计时由原实体持续持有。 */
+    public final class PreparedTransfer {
+        private final World targetWorld;
+        private Body target;
+        private final boolean active;
+
+        /** 记录已准备但尚未生效的目标身体。 */
+        private PreparedTransfer(World targetWorld, Body target, boolean active) {
+            this.targetWorld = targetWorld; this.target = target; this.active = active;
+        }
+
+        /** 安全点提交迁移，移动后速度清零，避免把旧门口的惯性带入新图。 */
+        public void commit() {
+            if (target == null) throw new IllegalStateException("迁移已结束");
+            if (b2dWorld.isLocked() || targetWorld.isLocked()) throw new IllegalStateException("物理步进中不能提交迁移");
+            b2dWorld.destroyBody(body);
+            b2dWorld = targetWorld;
+            body = target;
+            target = null;
+            body.setActive(active);
+        }
+
+        /** 准备阶段任一步失败时释放目标身体，源身体保持完整。 */
+        public void rollback() {
+            if (target != null) { targetWorld.destroyBody(target); target = null; }
+        }
+    }
+
     @Override
     public void dispose() {
+        disposeKeyframeShapes();
         if (body != null && b2dWorld != null) {
             try {
                 b2dWorld.destroyBody(body);
@@ -397,8 +475,10 @@ public class B2dBody extends SerializeComponent implements Disposable {
             }
             body = null;
         }
+        b2dWorld = null;
     }
 
+    /** 将像素位置同步到该实体自己所在的物理世界。 */
     public void setPos(Pos pos) {
         float worldScale = Worldloom.config().getWorldScale();
         body.setTransform(worldScale*pos.x, worldScale*pos.y, body.getAngle());

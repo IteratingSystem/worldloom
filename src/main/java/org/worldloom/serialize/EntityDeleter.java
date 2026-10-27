@@ -7,6 +7,7 @@ import com.artemis.utils.IntBag;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Disposable;
+import org.worldloom.system.MapIdentitySystem;
 
 /**
  * @Auther WenLong
@@ -16,6 +17,8 @@ import com.badlogic.gdx.utils.Disposable;
 public class EntityDeleter {
     public static final String TAG = EntityDeleter.class.getSimpleName();
     public static void deleteEntity(World world,int entityId){
+        MapIdentitySystem identities = world.getSystem(MapIdentitySystem.class);
+        if (identities != null) identities.forget(entityId);
         Entity entity = world.getEntity(entityId);
         Bag<Component> components = entity.getComponents(new Bag<>(Component.class));
         for (Component component : components) {

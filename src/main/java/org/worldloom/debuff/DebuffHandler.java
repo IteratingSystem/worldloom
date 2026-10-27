@@ -18,6 +18,12 @@ public interface DebuffHandler {
     default void onApplied(DebuffContext context) {
     }
 
+    /** 恢复时只重建临时修饰器，不重复首次施加奖励或伤害。 */
+    default void onRestored(DebuffContext context) {}
+
+    /** 游戏可禁止复制代理自行结算；默认所有地图均正常更新。 */
+    default boolean shouldUpdate(DebuffContext context) { return true; }
+
     /** 同名Debuff再次添加并刷新时间后调用。 */
     default void onRefreshed(DebuffContext context) {
     }

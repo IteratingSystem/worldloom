@@ -16,6 +16,10 @@ public class EntityDatum {
     public int mapObjectId;
     //地图名称
     public String fromMap;
+    /** 当前地图归属，与不可变的素材来源fromMap分离。 */
+    public String mapId;
+    /** 存档、联机和跨图引用使用的稳定实体身份。 */
+    public String entityKey;
     public String name;
     public String type;
     public Array<CompMirror> compMirrors;

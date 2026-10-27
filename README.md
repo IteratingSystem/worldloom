@@ -487,6 +487,18 @@ Box2D 传感器通常只可靠触发 `beginContact` / `endContact`，不要依�
 
 渲染顺序：普通地图层 -> Shader 瓦片层 -> 实体批次 -> 物理调试 -> UI。实体按 `ZIndex` 排序，`Render.visible` 控制是否绘制，`Inert` 实体会被多个渲染/更新系统排除。
 
+常驻多地图模式下，`TiledMapSystem.getCurrent()` 表示本机观察地图。实体绘制先检查 `MapMembership.mapId`，再将精灵实际绘制矩形与世界相机视域相交，只排序当帧可见的绘制任务。相机视域采用像素对齐和扩边后的实际相机；精灵边界包含偏移、离地高度、缩放、原点、旋转以及全部堆叠层，实体中心在屏外而图片仍在屏内时继续绘制。裁剪不会改写 `Render.visible`、添加 `Inert`、删除实体或取消注册，动画、寻路、物理、状态与持续伤害照常推进。含自定义 `ShaderComp` 的精灵保守跳过几何裁剪，避免未知顶点位移造成误隐藏。
+
+阴影、灯光、倒影等影响范围可能进入画面，即使主体图片已在屏外，也不能共用主体的裁剪结果。引擎阴影和两套灯光只按观察地图隔离，光线遮挡绑定观察图的独立Box2D世界；`LayerSampling` 在所属图被观察时才创建采样资源。书本地图和Scene2D界面不使用世界精灵裁剪。
+
+游戏自己实现的世界表现系统也需要限定观察地图，例如独立倒影缓冲、波纹、气泡和伤害跳字：
+
+```java
+if (!MapVisibility.inViewedMap(world, entityId)) return;
+```
+
+`org.worldloom.render.MapVisibility` 也提供 `inViewedMap(world, mapId)`，适合固定坐标的表现。只在绘制或表现资源生成处过滤；生命、日程等业务系统不得使用该条件停止后台实体更新。无 `MapMembership` 的旧实体仍保留旧式显示行为，常驻模式的新实体应由标准构建流程赋予归属。
+
 ### 10.1 相机跟随
 
 ```java
@@ -1272,6 +1284,22 @@ events.dispatch(AudioEvent.useCameraListener());
 - `Sound` 后端没有完成回调。一次性音效的句柄会在配置的跟踪时间后清理，但声音本身由 LibGDX 正常播放。
 - 音频偏好设置可直接转换成 master 与各总线音量事件，不需要业务系统持有 LibGDX 音频对象。
 
+### 20.5 常驻地图的声音归属
+
+实体世界音效优先使用 `.follow(entityId)`：声音系统会同时跟随实体坐标与当前地图，离开观察图时静音，返回后仍可继续循环。源实体销毁时，循环声音和音乐停止；一次音效保留最后坐标与地图，正常播放并按跟踪时间回收。全局UI点击与背景音乐不指定地图，保留原有行为。
+
+固定坐标音源应显式指定地图，不能只用两个坐标区分不同地图：
+
+```java
+events.dispatch(AudioEvent.playSound("world/water_splash")
+    .at(x, y)
+    .map("island")
+    .distances(16f, 240f));
+events.dispatch(AudioEvent.move(handle, newX, newY).map("island"));
+```
+
+`map(mapId)` 不创建地图、不切换玩家视图，也不影响世界逻辑，只限制声音可在哪张观察图听到。固定声音未指定地图时保留旧式全局语义，因此后台地图发声的游戏代码必须指定所属图，或改用实体跟随。
+
 ## 21. 寻路与行为树移动
 
 `NavigationSystem` 使用 gdx-ai 的八方向 A*。地图只提供导航网格范围和瓦片尺寸，
@@ -1442,3 +1470,37 @@ Worldloom 4.0.0 是一次破坏性升级，旧版本和旧 Git 标签继续保�
 8. Scene2D Skin 中的完整样式类名同步改为 `org.worldloom.*`。
 
 Tiled 中使用的组件简单名称保持不变，不需要为了品牌迁移修改地图对象。旧存档中的 `org.ltae.*` 系统类名和字段类型会在读取时自动迁移，加载成功后再次保存即可写成当前格式。
+
+
+## 24. 常驻多地图（4.9.0）
+
+默认仍为原单图模式。需要所有场景正常更新时，在配置中显式列出正式地图（不要包含物品/预制体模板）：
+
+```java
+WorldloomConfig.builder()
+    .initialMap("island")
+    .residentMaps("island", "house")
+    .entityLayer("island", "ENTITY")
+    .entityLayer("house", "ENTITY")
+    .physicsLayers("island", "SEA")
+    .physicsLayers("house", "WALL")
+    // 其余窗口、相机等配置沿用项目现有设置
+    .build();
+```
+
+一个Artemis World容纳所有正式图实体，`EntityFactory.BUILD_ALL`统一分配全部实体、恢复字段/身份/跨图引用，再恢复资源，最后激活状态机。每图独立Box2D World和导航缓存，每帧以相同正常delta步进一次；时钟、天气等全局系统只注册一次。`EnginePhase.PRE_PHYSICS`用于物理之前的全局决策，其它阶段保持原有顺序，不包含固定步长或离图补算。
+
+- `MapMembership.mapId/localTag/mapEpoch`表示当前地图、地图内名称及跨图代数；`PersistentIdentity.entityKey`是存档和网络身份。原`fromMap/mapObjectId`仍是素材来源，不能改成目的地图。
+- `MapIdentitySystem.resolve(key)`查稳定人物；`find(mapId, localTag)`查唯一局部锚点，重名有歧义返回-1；`sameMap(a,b)`用于空间行为预检。全局Tag仅为旧入口保留首个别名，不能用它定位不同房间的`PLAYER_POS`。
+- 动态生成调用`EntitySerializer.buildEntity(world, datum, mapId)`，分配新身份并清模板局部名称；网络/存档恢复单实体用`restoreEntity(world, datum, mapId)`保留身份。常驻模式禁止缺少出生地图的旧动态入口；不要用本机观察图代替生成物所属图。
+- `B2dSystem.getWorld(mapId)`及`getWorldForEntity(id)`用于射线、查询和Joint；旧`box2DWorld`只是观察图适配。接触、AI范围、交互先限定实体地图，地图局部坐标不可直接跨图比较。
+- `MapTransitionSystem.transfer(id, targetMap, x, y)`在世界解锁安全点预检落点、预建目标Body/Fixture，全部成功后才提交归属、Pos和Body，失败保持原位置。保留ECS实例、生命、库存、剧情和效果时钟，不调用整实体reload。`Portal.teleport`常驻分支排队解析目标图局部锚点；只有本机玩家请求才切观察图。
+- 附属物明确挂`MapAttachment.ownerId`随宿主迁移；`Owner.id`仅表示资产归属，不能让房屋/船只跟随买家进屋。跨World Joint默认拒绝迁移。迁移不等同复活，业务系统监听Body替换时只能更新物理缓存，不能重置冷却/受伤状态。
+- `observe(mapId, playerId)`只切本机视图及相机；`transferAuthoritative`供已验证的主机复制，跳过客户端动态落点碰撞差异但仍保留资源准备与归属校验，调用者负责应用主机mapEpoch。不要暴露给未经校验的客户端命令。
+- 保存按MapMembership覆盖全图快照（包括空图），全图恢复后通过稳定key解析Owner/User等实体引用。正常切图不捕获离图镜像、不删除场景实体；退出会话统一释放各图物理与组件原生资源。
+
+### 持续效果的保存边界
+
+`DebuffSystem`保存稳定身份关联的效果DTO，包括名称、remaining、tickElapsed及data。恢复只调用`DebuffHandler.onRestored`重建临时修饰器，不重复`onApplied`。游戏可用`shouldUpdate(context)`禁止复制代理自行结算权威伤害；同一主机全部地图仍正常推进。周期处理每帧最多32次，剩余债务保留到后续帧，回调内治疗/清除不会继续触发已移除效果。
+
+自定义系统需要边界快照时可实现`SystemSnapshotLifecycle`，在`beforeSnapshot()`刷新公开`@SerializeParam` DTO字段，`afterSnapshotRestore()`登记恢复工作；后者发生时实体可能尚未分配，需等加载屏障结束后再解析稳定身份。系统复杂集合优先用明确DTO/LibGDX Array，不能把Property.value往返后的未定型数组直接赋给Java数组字段。

@@ -678,5 +678,72 @@
             "object",
             "project"
         ]
+    },
+    {
+        "color": "#ffa0a0a4",
+        "drawFill": true,
+        "id": 47,
+        "members": [
+            {
+                "name": "localTag",
+                "type": "string",
+                "value": ""
+            },
+            {
+                "name": "mapId",
+                "type": "string",
+                "value": ""
+            },
+            {
+                "name": "mapEpoch",
+                "type": "int",
+                "value": 0
+            }
+        ],
+        "name": "MapMembership",
+        "type": "class",
+        "useAs": [
+            "property",
+            "object",
+            "project"
+        ]
+    },
+    {
+        "color": "#ffa0a0a4",
+        "drawFill": true,
+        "id": 48,
+        "members": [
+            {
+                "name": "entityKey",
+                "type": "string",
+                "value": ""
+            }
+        ],
+        "name": "PersistentIdentity",
+        "type": "class",
+        "useAs": [
+            "property",
+            "object",
+            "project"
+        ]
+    },
+    {
+        "color": "#ffa0a0a4",
+        "drawFill": true,
+        "id": 49,
+        "members": [
+            {
+                "name": "ownerId",
+                "type": "int",
+                "value": -1
+            }
+        ],
+        "name": "MapAttachment",
+        "type": "class",
+        "useAs": [
+            "property",
+            "object",
+            "project"
+        ]
     }
 ]

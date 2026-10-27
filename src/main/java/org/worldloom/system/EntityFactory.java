@@ -16,6 +16,8 @@ import org.worldloom.serialize.EntityBuilder;
 import org.worldloom.serialize.EntitySerializer;
 import org.worldloom.serialize.data.EntityData;
 import org.worldloom.serialize.data.EntityDatum;
+import org.worldloom.Worldloom;
+import org.worldloom.manager.map.GameSnapshotManager;
 
 
 /**
@@ -53,8 +55,17 @@ public class EntityFactory extends BaseSystem {
         EntityDeleter.deleteAll(world);
         EntityBuilder.buildEntities(world, EntityData);
     }
+    /** 常驻会话统一分配全部正式地图实体，模板地图仅供后续显式实例化。 */
     private void buildAll(){
-        EntityBuilder.buildEntities(world,tiledMapSystem.getCurrent());
+        if (Worldloom.config().getResidentMaps().isEmpty()) {
+            EntityBuilder.buildEntities(world,tiledMapSystem.getCurrent());
+            return;
+        }
+        ObjectMap<String, EntityData> maps = new ObjectMap<>();
+        for (String map : Worldloom.config().getResidentMaps()) {
+            maps.put(map, GameSnapshotManager.getInstance().getEntityData(map));
+        }
+        EntitySerializer.buildEntities(world, maps);
     }
     private void buildEntities(EntityData entityData){
         EntityBuilder.buildEntities(world, entityData);

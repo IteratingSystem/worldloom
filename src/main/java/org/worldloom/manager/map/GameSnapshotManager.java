@@ -4,6 +4,7 @@ import com.artemis.BaseSystem;
 import com.artemis.World;
 import com.badlogic.gdx.utils.ObjectMap;
 import org.worldloom.manager.JsonManager;
+import org.worldloom.Worldloom;
 import org.worldloom.serialize.EntitySerializer;
 import org.worldloom.serialize.SerializeParam;
 import org.worldloom.serialize.SerializeSystem;
@@ -80,13 +81,26 @@ public class GameSnapshotManager {
         setSnapshot(JsonManager.fromJson(GameSnapshot.class, json));
     }
 
-    /** Captures the current map and all serializable system fields. */
+    /** 常驻会话按实际归属捕获全部地图，空图也覆盖旧存档；旧模式只捕获当前图。 */
     public void captureCurrentWorld(World world) {
         requireWorldState();
         TiledMapSystem tiledMapSystem = world.getSystem(TiledMapSystem.class);
         String currentMap = tiledMapSystem.getCurrent();
         gameSnapshot.curtMap = currentMap;
-        gameSnapshot.entityData.put(currentMap, EntitySerializer.createEntityData(world));
+        if (Worldloom.config().getResidentMaps().isEmpty()) {
+            gameSnapshot.entityData.put(currentMap, EntitySerializer.createEntityData(world));
+        } else {
+            ObjectMap<String, EntityData> grouped = new ObjectMap<>();
+            for (String mapId : Worldloom.config().getResidentMaps()) grouped.put(mapId, new EntityData());
+            for (EntityDatum entity : EntitySerializer.createEntityData(world)) {
+                EntityData target = entity.mapId == null ? null : grouped.get(entity.mapId);
+                if (target == null)
+                    throw new IllegalStateException("存档实体缺少正式地图归属：" + entity.entityId + " / " + entity.mapId);
+                target.add(entity);
+            }
+            for (ObjectMap.Entry<String, EntityData> map : grouped)
+                gameSnapshot.entityData.put(map.key, map.value);
+        }
         captureSystemProperties(world);
     }
 
@@ -132,6 +146,7 @@ public class GameSnapshotManager {
                 continue;
             }
 
+            if (system instanceof org.worldloom.serialize.SystemSnapshotLifecycle lifecycle) lifecycle.beforeSnapshot();
             Properties properties = new Properties();
             for (Field field : systemClass.getFields()) {
                 if (!field.isAnnotationPresent(SerializeParam.class)) {

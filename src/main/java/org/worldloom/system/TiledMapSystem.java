@@ -29,6 +29,10 @@ public class TiledMapSystem extends BaseSystem {
         current = mapName;
         MapManager.init(entityLayers, phyLayers, hiddenLayers);
     }
+    /** 根据明确地图身份读取资源，不改变本机观察图。 */
+    public TiledMap getTiledMap(String mapId) { return MapManager.getInstance().getTiledMap(mapId); }
+    /** 根据明确地图身份读取瓦片碰撞层。 */
+    public MapLayer[] getPhyLayer(String mapId) { return MapManager.getInstance().getPhyLayer(mapId); }
     public TiledMap getTiledMap(){
         MapManager mapManager = MapManager.getInstance();
         return mapManager.getTiledMap(current);
@@ -45,11 +49,14 @@ public class TiledMapSystem extends BaseSystem {
     }
 
     private void changeMap(String mapName){
+        if (!b2dSystem.isResidentMode()) b2dSystem.delTileCollider();
         changeCurrent(mapName);
         renderTiledSystem.changeMap();
-        //只删除tile碰撞体，保留其他实体的body
-        b2dSystem.delTileCollider();
-        b2dSystem.createTileCollider();
+        if (b2dSystem.isResidentMode()) {
+            b2dSystem.selectViewedMap(mapName);
+        } else {
+            b2dSystem.createTileCollider();
+        }
     }
     @Override
     protected void initialize() {

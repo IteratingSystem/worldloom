@@ -7,7 +7,12 @@ import com.artemis.utils.IntBag;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.maps.*;
 import com.badlogic.gdx.utils.Array;
+import com.badlogic.gdx.utils.ObjectMap;
 import com.badlogic.gdx.graphics.Color;
+import org.worldloom.component.MapMembership;
+import org.worldloom.component.PersistentIdentity;
+import org.worldloom.component.StateComp;
+import org.worldloom.system.MapIdentitySystem;
 import org.worldloom.ui.inventory.SlotDatum;
 import org.worldloom.Worldloom;
 import org.worldloom.component.parent.SerializeComponent;
@@ -18,9 +23,9 @@ import org.worldloom.serialize.data.*;
 import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
-import java.util.Set;
 import java.util.Map;
 import java.util.HashMap;
+import java.util.UUID;
 
 /**
  * @Auther WenLong
@@ -56,6 +61,7 @@ public class EntitySerializer {
             entityDatum.compMirrors = new Array<>();
             entityDatum.mapObjectId = mapObject.getProperties().get("id",0,Integer.class);
             entityDatum.fromMap = mapName;
+            entityDatum.mapId = mapName;
 
             entityDatum.name = entityName;
             entityDatum.type = properties.get("type", "", String.class);
@@ -131,6 +137,13 @@ public class EntitySerializer {
         entity.entityId = entityId;
         TagManager tagManager = world.getSystem(TagManager.class);
         entity.name = tagManager.getTag(entityId);
+        MapMembership membership = world.getMapper(MapMembership.class).get(entityId);
+        PersistentIdentity identity = world.getMapper(PersistentIdentity.class).get(entityId);
+        if (membership != null) {
+            entity.mapId = membership.mapId;
+            entity.name = membership.localTag;
+        }
+        if (identity != null) entity.entityKey = identity.entityKey;
 
         boolean isSetMapMsg = false;
         for (Component component : allComps) {
@@ -182,6 +195,8 @@ public class EntitySerializer {
                 if (field.isAnnotationPresent(EntityReference.class) && value instanceof Number reference
                     && reference.intValue() >= 0) {
                     prop.entityReferenceTag = tagManager.getTag(reference.intValue());
+                    PersistentIdentity target = world.getMapper(PersistentIdentity.class).get(reference.intValue());
+                    if (target != null) prop.entityReferenceKey = target.entityKey;
                 }
 
                 compMirror.properties.add(prop);
@@ -206,21 +221,36 @@ public class EntitySerializer {
         entityData.add(entityDatum);
     }
 
-    @SuppressWarnings("unchecked")
+    /** 实例化已明确归属的模板，常驻模式拒绝把素材来源或观察图当作出生地图。 */
     public static int buildEntity(World world, EntityDatum entityDatum) {
-        EntityDatum runtime = allocateEntity(world, entityDatum);
-        restoreComponents(world, runtime, null);
-        return runtime.entityId;
+        if (!Worldloom.config().getResidentMaps().isEmpty()) {
+            if (entityDatum.mapId == null || !Worldloom.config().getResidentMaps().contains(entityDatum.mapId, false))
+                throw new IllegalArgumentException("常驻动态实体必须显式指定正式出生地图");
+            return buildEntity(world, entityDatum, entityDatum.mapId);
+        }
+        EntityData batch = new EntityData();
+        batch.add(entityDatum);
+        return restoreBatch(world, batch).first().entityId;
     }
 
-    /** 分配独立运行期镜像；组件恢复修改集合或属性时不会污染输入模板和存档。 */
-    private static EntityDatum allocateEntity(World world, EntityDatum source) {
-        EntityDatum runtime = copyEntityDatum(source);
-        runtime.entityId = world.create();
-        if (runtime.name != null && !runtime.name.isEmpty()) {
-            world.getSystem(TagManager.class).register(runtime.name, runtime.entityId);
-        }
-        return runtime;
+    /** 在明确目标地图动态生成新实例，始终分配新身份，不抢占模板局部名称。 */
+    public static int buildEntity(World world, EntityDatum source, String mapId) {
+        EntityDatum spawn = copyEntityDatum(source);
+        spawn.mapId = mapId;
+        spawn.entityKey = "spawn:" + UUID.randomUUID();
+        spawn.name = "";
+        EntityData batch = new EntityData();
+        batch.add(spawn);
+        return restoreBatch(world, batch).first().entityId;
+    }
+
+    /** 恢复联机传来的单实体快照，保留其身份并显式指定当前地图。 */
+    public static int restoreEntity(World world, EntityDatum source, String mapId) {
+        EntityDatum saved = copyEntityDatum(source);
+        saved.mapId = mapId;
+        EntityData batch = new EntityData();
+        batch.add(saved);
+        return restoreBatch(world, batch).first().entityId;
     }
 
     /**
@@ -233,6 +263,8 @@ public class EntitySerializer {
         copy.entityId = source.entityId;
         copy.dataFrom = source.dataFrom;
         copy.fromMap = source.fromMap;
+        copy.mapId = source.mapId;
+        copy.entityKey = source.entityKey;
         copy.mapObjectId = source.mapObjectId;
         copy.name = source.name;
         copy.type = source.type;
@@ -254,6 +286,7 @@ public class EntitySerializer {
             value.type = property.type;
             value.value = copySnapshotValue(property.value);
             value.entityReferenceTag = property.entityReferenceTag;
+            value.entityReferenceKey = property.entityReferenceKey;
             copy.properties.add(value);
         }
         return copy;
@@ -287,9 +320,9 @@ public class EntitySerializer {
         return JsonManager.getJson().fromJson(value.getClass(), JsonManager.toJson(value));
     }
 
-    /** 按名称索引组件镜像，沿用类型集合的恢复顺序，避免每个类型再次扫描全部镜像。 */
+    /** 按阶段恢复普通字段或实体引用，全部字段完成前不加载组件资源。 */
     @SuppressWarnings("unchecked")
-    private static void restoreComponents(World world, EntityDatum entityDatum, Map<Integer, Integer> restoredIds) {
+    private static void restoreFields(World world, EntityDatum entityDatum, Map<Integer, Integer> restoredIds, boolean references) {
         int entityId = entityDatum.entityId;
 
         Array<CompMirror> components = entityDatum.compMirrors;
@@ -332,18 +365,24 @@ public class EntitySerializer {
                         Gdx.app.error(TAG,"Field " + key + " is not annotated with " + SerializeParam.class.getSimpleName() + "in "+compMirror.simpleName );
                         continue;
                     }
+                    if (field.isAnnotationPresent(EntityReference.class) != references) continue;
                     field.setAccessible(true); // 允许访问私有字段
 
                     Class<?> type = field.getType();
-                    if (restoredIds != null && entityDatum.dataFrom == EntityData.FROM_WORLD
-                        && field.isAnnotationPresent(EntityReference.class)) {
+                    if (field.isAnnotationPresent(EntityReference.class)) {
                         if (type != int.class) {
-                            throw new IllegalArgumentException("EntityReference must annotate an int: " + field);
+                            throw new IllegalArgumentException("实体引用仅支持int字段：" + field);
                         }
                         int oldId = ((Number) coerceType(value, int.class)).intValue();
-                        int taggedId = prop.entityReferenceTag == null ? -1
-                            : world.getSystem(TagManager.class).getEntityId(prop.entityReferenceTag);
-                        value = oldId < 0 ? -1 : taggedId >= 0 ? taggedId : restoredIds.getOrDefault(oldId, -1);
+                        int resolved = -1;
+                        MapIdentitySystem identities = world.getSystem(MapIdentitySystem.class);
+                        if (prop.entityReferenceKey != null && identities != null)
+                            resolved = identities.resolve(prop.entityReferenceKey);
+                        if (resolved < 0 && entityDatum.dataFrom == EntityData.FROM_WORLD)
+                            resolved = restoredIds.getOrDefault(oldId, -1);
+                        if (resolved < 0 && prop.entityReferenceTag != null)
+                            resolved = world.getSystem(TagManager.class).getEntityId(prop.entityReferenceTag);
+                        value = oldId < 0 ? -1 : resolved;
                     }
                     if (type.isEnum()) {
                         // 假设 value 为 String（枚举名称）或 Number（枚举序数）
@@ -373,34 +412,6 @@ public class EntitySerializer {
                         value = coerceType(value, type);
                     }
 
-//                        if (value instanceof Array<?> arrayValue && arrayValue.notEmpty()) {
-//                            try {
-//                                Type genericType = field.getGenericType();
-//                                if (genericType instanceof ParameterizedType pt) {
-//                                    Class<?> elementType = (Class<?>) pt.getActualTypeArguments()[0];
-//                                    @SuppressWarnings("unchecked")
-//                                    Array<Object> rawArray = (Array<Object>) arrayValue;
-//                                    for (int i = 0; i < rawArray.size; i++) {
-//                                        Object elem = rawArray.get(i);
-//                                        if (elem == null) continue;
-//                                        if (elementType.isEnum() && elem instanceof String s) {
-//                                            try {
-//                                                rawArray.set(i, Enum.valueOf(elementType.asSubclass(Enum.class), s));
-//                                            } catch (IllegalArgumentException e) {
-//                                                Gdx.app.error(TAG, "Invalid enum value: " + s + " for element " + i + " in field " + key);
-//                                            }
-//                                        } else if (!elementType.isInstance(elem)) {
-//                                            Object converted = coerceType(elem, elementType);
-//                                            if (converted != null) {
-//                                                rawArray.set(i, converted);
-//                                            }
-//                                        }
-//                                    }
-//                                }
-//                            } catch (Exception e) {
-//                                Gdx.app.error(TAG, "Failed to convert Array elements for field " + key + ": " + e.getMessage());
-//                            }
-//                        }
                     if (value instanceof Array<?> arrayValue && arrayValue.notEmpty()) {
                         restoreArrayElements(field, key, arrayValue);
                     }
@@ -413,10 +424,6 @@ public class EntitySerializer {
                 }
             }
 
-            // 执行 reload
-            if (component instanceof SerializeComponent) {
-                ((SerializeComponent) component).reload(world, entityDatum);
-            }
         }
     }
 
@@ -489,23 +496,104 @@ public class EntitySerializer {
     }
 
 
-    public static void buildEntities(World world, EntityData entityData){
-        if (entityData == null) {
-            return;
+    /** 恢复已有快照，优先使用保存的地图归属。 */
+    public static void buildEntities(World world, EntityData entityData) {
+        if (entityData != null) restoreBatch(world, entityData);
+    }
+
+    /** 指定单图归属后恢复，不修改输入快照或素材来源。 */
+    public static void buildEntities(World world, EntityData entityData, String mapId) {
+        if (entityData == null) return;
+        EntityData batch = new EntityData();
+        appendMap(batch, entityData, mapId);
+        restoreBatch(world, batch);
+    }
+
+    /** 全图共用分配、身份、引用及资源屏障，跨图前向引用也能正确恢复。 */
+    public static void buildEntities(World world, ObjectMap<String, EntityData> maps) {
+        EntityData batch = new EntityData();
+        for (ObjectMap.Entry<String, EntityData> map : maps)
+            appendMap(batch, map.value, map.key);
+        restoreBatch(world, batch);
+    }
+
+    /** 复制每图快照并附上当前归属，不覆盖不可变的fromMap来源。 */
+    private static void appendMap(EntityData batch, EntityData source, String mapId) {
+        if (source == null) return;
+        for (EntityDatum saved : source) {
+            EntityDatum copy = copyEntityDatum(saved);
+            copy.mapId = mapId;
+            batch.add(copy);
         }
+    }
+
+    /** 全部字段就绪后才加载资源，最后启动状态机；失败时撤销本批实体。 */
+    private static Array<EntityDatum> restoreBatch(World world, EntityData source) {
+        Array<EntityDatum> runtime = new Array<>(source.size);
         Map<Integer, Integer> restoredIds = new HashMap<>();
-        Array<EntityDatum> runtime = new Array<>(entityData.size);
-        for (EntityDatum saved : entityData) {
-            EntityDatum allocated = allocateEntity(world, saved);
-            runtime.add(allocated);
-            if (saved.dataFrom == EntityData.FROM_WORLD) {
-                restoredIds.put(saved.entityId, allocated.entityId);
+        MapIdentitySystem identities = world.getSystem(MapIdentitySystem.class);
+        try {
+            for (EntityDatum saved : source) {
+                EntityDatum entity = copyEntityDatum(saved);
+                entity.entityId = world.create();
+                runtime.add(entity);
+                if (saved.dataFrom == EntityData.FROM_WORLD)
+                    restoredIds.put(saved.entityId, entity.entityId);
             }
+            for (EntityDatum entity : runtime) restoreFields(world, entity, restoredIds, false);
+            for (EntityDatum entity : runtime) {
+                restoreIdentity(world, entity);
+                if (identities != null && world.getMapper(MapMembership.class).has(entity.entityId))
+                    identities.refresh(entity.entityId);
+            }
+            // 保留旧业务的全局标签，但重复局部名称不覆盖已有别名。
+            TagManager tags = world.getSystem(TagManager.class);
+            for (EntityDatum entity : runtime)
+                if (entity.name != null && !entity.name.isBlank() && tags.getEntityId(entity.name) < 0)
+                    tags.register(entity.name, entity.entityId);
+            for (EntityDatum entity : runtime) restoreFields(world, entity, restoredIds, true);
+            for (EntityDatum entity : runtime) reloadComponents(world, entity, false);
+            for (EntityDatum entity : runtime) reloadComponents(world, entity, true);
+            return runtime;
+        } catch (RuntimeException | Error failure) {
+            for (EntityDatum entity : runtime) {
+                if (identities != null) identities.forget(entity.entityId);
+                try { EntityDeleter.deleteEntity(world, entity.entityId); }
+                catch (RuntimeException cleanupFailure) { failure.addSuppressed(cleanupFailure); }
+            }
+            throw failure;
         }
-        // All IDs and tags exist before resolving forward references. Source snapshots stay immutable.
-        for (EntityDatum allocated : runtime) {
-            restoreComponents(world, allocated, restoredIds);
-        }
+    }
+
+    /** 将运行元数据写入归属组件；明确实例化参数优先于镜像里的模板值。 */
+    private static void restoreIdentity(World world, EntityDatum entity) {
+        boolean resident = !Worldloom.config().getResidentMaps().isEmpty();
+        if (!resident && !world.getMapper(MapMembership.class).has(entity.entityId)) return;
+        MapMembership membership = world.getMapper(MapMembership.class).create(entity.entityId);
+        PersistentIdentity identity = world.getMapper(PersistentIdentity.class).create(entity.entityId);
+        String mapId = entity.mapId;
+        if (mapId == null || mapId.isBlank()) mapId = membership.mapId;
+        if (mapId == null || mapId.isBlank()) mapId = entity.fromMap;
+        if (mapId == null || mapId.isBlank() || (resident && !Worldloom.config().getResidentMaps().contains(mapId, false)))
+            throw new IllegalArgumentException("实体缺少正式地图归属：" + entity.name + " / " + mapId);
+        membership.mapId = mapId;
+        membership.localTag = entity.name == null ? "" : entity.name;
+        String key = entity.entityKey;
+        if (key == null || key.isBlank()) key = identity.entityKey;
+        if (key == null || key.isBlank())
+            key = entity.dataFrom == EntityData.FROM_MAP && entity.mapObjectId > 0
+                ? "map:" + mapId + ":" + entity.mapObjectId : "spawn:" + UUID.randomUUID();
+        identity.entityKey = key;
+        entity.mapId = mapId;
+        entity.entityKey = key;
+    }
+
+    /** 按阶段恢复组件资源，状态机必须等其它实体和资源全部就绪。 */
+    private static void reloadComponents(World world, EntityDatum entity, boolean states) {
+        Bag<Component> components = world.getEntity(entity.entityId).getComponents(new Bag<>());
+        for (Component component : components)
+            if (component instanceof SerializeComponent serializable && (component instanceof StateComp) == states)
+                serializable.reload(world, entity);
     }
     public static String toJson(EntityData entityData){
         return JsonManager.toJson(entityData);

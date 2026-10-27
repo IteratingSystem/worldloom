@@ -29,9 +29,12 @@ public class OnInteractSystem extends BaseSystem {
 
 
 
+    /** 仅向同地图目标派发交互，避免相同局部坐标导致跨图操作。 */
     @Subscribe
     public void onEvent(InteractEvent interactEvent){
         int toId = interactEvent.toId;
+        if (org.worldloom.Worldloom.config().getResidentMaps().notEmpty()
+            && !world.getSystem(MapIdentitySystem.class).sameMap(interactEvent.fromId, toId)) return;
         if (!mInteractive.has(toId)) {
             Gdx.app.error(TAG,"Failed to onEvent,Target entity is not has component 'Interactive';");
             return;

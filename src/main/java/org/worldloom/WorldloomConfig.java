@@ -19,6 +19,7 @@ public final class WorldloomConfig {
     private final ObjectMap<String, String[]> hiddenLayers;
     private final ObjectMap<String, String> navigationRoadLayers;
     private final Array<Class<? extends Component>> autoComponents;
+    private final Array<String> residentMaps;
     private final int uiWidth;
     private final int uiHeight;
     private final float uiZoom;
@@ -43,6 +44,7 @@ public final class WorldloomConfig {
         hiddenLayers = copyArrayMap(builder.hiddenLayers);
         navigationRoadLayers = copyStringMap(builder.navigationRoadLayers);
         autoComponents = new Array<>(builder.autoComponents);
+        residentMaps = new Array<>(builder.residentMaps);
         uiWidth = builder.uiWidth;
         uiHeight = builder.uiHeight;
         uiZoom = builder.uiZoom;
@@ -72,6 +74,11 @@ public final class WorldloomConfig {
         return copyStringMap(navigationRoadLayers);
     }
     public Array<Class<? extends Component>> getAutoComponents() { return new Array<>(autoComponents); }
+    /** 返回正式常驻地图的副本；空集合保留原单地图加载方式，不包括物品和预制体模板。 */
+    public Array<String> getResidentMaps() { return new Array<>(residentMaps); }
+
+    /** 查询常驻模式开关，不在逐实体物理查询中复制地图目录。 */
+    public boolean isResidentMode() { return residentMaps.notEmpty(); }
     public int getUiWidth() { return uiWidth; }
     public int getUiHeight() { return uiHeight; }
     public float getUiZoom() { return uiZoom; }
@@ -112,6 +119,7 @@ public final class WorldloomConfig {
         private final ObjectMap<String, String[]> hiddenLayers = new ObjectMap<>();
         private final ObjectMap<String, String> navigationRoadLayers = new ObjectMap<>();
         private final Array<Class<? extends Component>> autoComponents = new Array<>();
+        private final Array<String> residentMaps = new Array<>();
         private int uiWidth = 640;
         private int uiHeight = 480;
         private float uiZoom = 1f;
@@ -171,6 +179,17 @@ public final class WorldloomConfig {
             return this;
         }
         public Builder initialMap(String mapName) { initialMap = mapName; return this; }
+        /** 指定共用一个ECS、独立物理世界的正式地图，必须同时配置各图实体层。 */
+        public Builder residentMaps(String... mapNames) {
+            residentMaps.clear();
+            for (String name : mapNames) {
+                if (name == null || name.isBlank() || residentMaps.contains(name, false)) {
+                    throw new IllegalArgumentException("常驻地图名称不能为空或重复");
+                }
+                residentMaps.add(name);
+            }
+            return this;
+        }
         public Builder skin(String path) { skinPath = path; return this; }
 
         public Builder entityLayer(String mapName, String layerName) {
@@ -223,6 +242,12 @@ public final class WorldloomConfig {
             }
             if (initialMap == null || initialMap.isBlank()) {
                 throw new IllegalStateException("initial map cannot be blank");
+            }
+            if (!residentMaps.isEmpty() && !residentMaps.contains(initialMap, false)) {
+                throw new IllegalStateException("初始地图必须属于正式常驻地图");
+            }
+            for (String map : residentMaps) {
+                if (!entityLayers.containsKey(map)) throw new IllegalStateException("常驻地图缺少实体层：" + map);
             }
             if (skinPath == null || skinPath.isBlank()) {
                 throw new IllegalStateException("skin path cannot be blank");

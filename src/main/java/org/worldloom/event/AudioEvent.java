@@ -35,6 +35,8 @@ public class AudioEvent extends TypeEvent {
     public float y;
     public boolean spatial;
     public int sourceEntityId = -1;
+    /** 固定声源的地图；留空表示全局，实体跟随声源优先使用实体当前归属。 */
+    public String mapId;
     public float minDistance = -1f;
     public float maxDistance = -1f;
     public float rolloff = -1f;
@@ -339,6 +341,15 @@ public class AudioEvent extends TypeEvent {
         this.y = y;
         spatial = true;
         sourceEntityId = -1;
+        return this;
+    }
+
+    /** 为固定位置声音指定地图，避免后台地图相同坐标的声音传入当前画面。 */
+    public AudioEvent map(String mapId) {
+        if (mapId == null || mapId.isBlank()) {
+            throw new IllegalArgumentException("audio mapId cannot be blank");
+        }
+        this.mapId = mapId;
         return this;
     }
 

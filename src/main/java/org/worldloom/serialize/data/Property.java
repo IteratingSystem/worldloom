@@ -9,6 +9,8 @@ public class Property {
     public String key;
     public String type;
     public Object value;
-    /** Stable fallback for @EntityReference fields whose target is carried across maps. */
+    /** 兼容旧引用的全局标签。 */
     public String entityReferenceTag;
+    /** 跨地图保存引用时优先使用稳定身份，不依赖运行期编号。 */
+    public String entityReferenceKey;
 }

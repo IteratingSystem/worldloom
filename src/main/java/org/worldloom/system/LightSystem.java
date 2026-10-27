@@ -36,6 +36,7 @@ public class LightSystem extends BaseSystem {
         rayHandler.setAmbientLight(color);
     }
 
+    /** 使用观察图的物理世界计算遮挡，灯光对象继续复用原有处理器。 */
     @Override
     protected void processSystem() {
         if(!enable){
@@ -45,6 +46,7 @@ public class LightSystem extends BaseSystem {
         if (rayHandler == null) {
             return;
         }
+        rayHandler.setWorld(b2dSystem.box2DWorld);
         rayHandler.setCombinedMatrix(cameraSystem.camera);
         rayHandler.update();
         rayHandler.prepareRender();
