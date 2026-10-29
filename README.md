@@ -1576,3 +1576,7 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 所有几何入口均使用与Pos一致的Y向上源像素；世界相机/物理坐标须先除以worldScale。复用TmxMapLoader已完成的Y翻转，补齐对象顺时针旋转及父组/本层偏移，不二次翻转。矩形/椭圆/胶囊按Tiled左上角为旋转轴；胶囊半径为短边的一半，长边决定中心线方向，等宽高时为圆。EcsMapLoader保留CapsuleMapObject身份并同步对象编号引用，避免LibGDX 1.14.2将其当矩形；4.11.1起同时保留延迟解析的对象属性引用。此支持用于区域查询，不新增胶囊Box2D夹具。支持旋转椭圆/胶囊精确查询和凹多边形完整包含，不能用AABB或仅四角判断替代。点在边界算包含，矩形完整包含允许贴边，相交查询将触边算相交；非有限或零面积查询返回false。
 
 同层多个区域分别判断，完整矩形必须落在同一个区域内，不自动将相邻区域拼为许可范围。建议公共地图默认禁止建造，游戏PlacementSystem先查询允许区，再查禁建区和地面/碰撞/距离等条件；不要让引擎硬编码BUILD之类的业务含义。
+
+## 26. 绘制基础资源与阴影内部职责（4.12.0）
+
+- `RenderResources.createScreenQuad()`创建位置2维+UV2维的全屏四边形，按`GL_TRIANGLE_FAN`绘制；`createSoftMask(size, solidRadius)`创建白色径向软遮罩，半径占比范围`[0,1)`。每次返回独立GL资源，创建方在GL线程使用并释放；工厂不缓存资源，不接管AssetManager纹理。
