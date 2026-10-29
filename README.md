@@ -1580,3 +1580,5 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 ## 26. 绘制基础资源与阴影内部职责（4.12.0）
 
 - `RenderResources.createScreenQuad()`创建位置2维+UV2维的全屏四边形，按`GL_TRIANGLE_FAN`绘制；`createSoftMask(size, solidRadius)`创建白色径向软遮罩，半径占比范围`[0,1)`。每次返回独立GL资源，创建方在GL线程使用并释放；工厂不缓存资源，不接管AssetManager纹理。
+- `TopDownShadowSystem`保留ECS筛选、绘制顺序、阈值与合成；透明度扫描交给`OpaqueRegionCache`，太阳投影与凸包交给`SunShadowGeometry`。缓存只保留区域范围，`clear()`不释放共享纹理；投影数组由实例复用，只读且在下次计算前消费。
+- 阴影固定资源按创建顺序登记、逆序释放；可重建FBO单独登记，初始化中断也能回收已成功创建的部分，重复释放不再销毁同一资源。纹理内容原位重载时需清空透明度缓存，普通切图复用缓存。

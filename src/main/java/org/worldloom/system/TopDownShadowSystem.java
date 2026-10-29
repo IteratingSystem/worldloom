@@ -10,7 +10,6 @@ import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.Mesh;
 import com.badlogic.gdx.graphics.Pixmap;
 import com.badlogic.gdx.graphics.Texture;
-import com.badlogic.gdx.graphics.TextureData;
 import com.badlogic.gdx.graphics.VertexAttribute;
 import com.badlogic.gdx.graphics.VertexAttributes;
 import com.badlogic.gdx.graphics.g2d.SpriteBatch;
@@ -22,9 +21,6 @@ import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.BufferUtils;
 import com.badlogic.gdx.utils.IntArray;
-import com.badlogic.gdx.utils.LongMap;
-import com.badlogic.gdx.utils.ObjectMap;
-import com.badlogic.gdx.utils.ObjectSet;
 import net.mostlyoriginal.api.plugin.extendedcomponentmapper.M;
 import org.worldloom.component.Inert;
 import org.worldloom.component.Pos;
@@ -36,6 +32,8 @@ import org.worldloom.light.SunLightConfig;
 import org.worldloom.light.TopDownShadowConfig;
 import org.worldloom.light.TopDownShadowLight;
 import org.worldloom.light.TopDownSunLight;
+import org.worldloom.light.OpaqueRegionCache;
+import org.worldloom.light.SunShadowGeometry;
 import org.worldloom.manager.ShaderManager;
 import org.worldloom.render.MapVisibility;
 
@@ -51,7 +49,6 @@ public class TopDownShadowSystem extends BaseSystem {
     private static final int SUN_RIBBON_MAX_VERTICES = 8;
     private static final float SUN_RIBBON_CHECK_TEXELS = 6f;
     private static final float SUN_RIBBON_SWITCH_TEXELS = 2.5f;
-    private static final float OPAQUE_ALPHA_THRESHOLD = 0.01f;
     private static final int GL_MAX_BLEND_EQUATION = 0x8008;
     private static final String SHADER_PATH = "shader/topdown/";
 
@@ -66,12 +63,10 @@ public class TopDownShadowSystem extends BaseSystem {
     private final Vector3 lightAxisDepth = new Vector3();
     private final IntBuffer glStateBuffer = BufferUtils.newIntBuffer(1);
     private final int[] previousTextureBindings = new int[4];
-    private final ObjectMap<Texture, LongMap<OpaqueBounds>> opaqueBoundsCache =
-        new ObjectMap<>();
-    private final ObjectSet<Texture> unreadableOpaqueTextures = new ObjectSet<>();
-    private final float[] ribbonLocal = new float[8];
-    private final float[] ribbonCandidates = new float[16];
-    private final float[] ribbonHull = new float[32];
+    private final OpaqueRegionCache opaqueRegions = new OpaqueRegionCache();
+    private final SunShadowGeometry sunGeometry;
+    private final com.badlogic.gdx.utils.Array<com.badlogic.gdx.utils.Disposable> renderResources = new com.badlogic.gdx.utils.Array<>();
+    private final com.badlogic.gdx.utils.Array<FrameBuffer> frameBuffers = new com.badlogic.gdx.utils.Array<>();
 
     private B2dSystem b2dSystem;
     private CameraSystem cameraSystem;
@@ -145,6 +140,7 @@ public class TopDownShadowSystem extends BaseSystem {
             throw new IllegalArgumentException("sunConfig cannot be null");
         }
         this.worldScale = worldScale;
+        sunGeometry = new SunShadowGeometry(worldScale);
         this.config = config;
         this.sunConfig = sunConfig;
     }
@@ -159,73 +155,78 @@ public class TopDownShadowSystem extends BaseSystem {
                 .exclude(Inert.class));
 
         RayHandler.useDiffuseLight(true);
-        pointRayHandler = new RayHandler(b2dSystem.box2DWorld);
-        pointRayHandler.setAmbientLight(0f);
-        pointRayHandler.setBlur(true);
-        pointRayHandler.setBlurNum(1);
-        pointRayHandler.setLightMapRendering(false);
-        sunLight = new TopDownSunLight(pointRayHandler, 0f,
-            config.getHeightRange());
-        sunLight.setSunBearingDegree(sunConfig.getReferenceBearingDegree());
-        sunLight.setElevationDegree(sunConfig.getMinimumElevationDegree());
+        try {
+            pointRayHandler = own(new RayHandler(b2dSystem.box2DWorld));
+            pointRayHandler.setAmbientLight(0f);
+            pointRayHandler.setBlur(true);
+            pointRayHandler.setBlurNum(1);
+            pointRayHandler.setLightMapRendering(false);
+            sunLight = new TopDownSunLight(pointRayHandler, 0f,
+                config.getHeightRange());
+            sunLight.setSunBearingDegree(sunConfig.getReferenceBearingDegree());
+            sunLight.setElevationDegree(sunConfig.getMinimumElevationDegree());
 
-        spriteBatch = new SpriteBatch();
-        screenQuad = createScreenQuad();
-        sunProjectedShadowMesh = createProjectedShadowMesh(1);
-        projectedShadowMesh = createProjectedShadowMesh(SHADOW_SEGMENTS);
-        for (int layers = 2; layers <= MAX_VOLUME_LAYERS; layers++) {
-            volumeSliceMeshes[layers] = createVolumeSliceMesh(layers);
+            spriteBatch = own(new SpriteBatch());
+            screenQuad = own(org.worldloom.render.RenderResources.createScreenQuad());
+            sunProjectedShadowMesh = own(createProjectedShadowMesh(1));
+            projectedShadowMesh = own(createProjectedShadowMesh(SHADOW_SEGMENTS));
+            for (int layers = 2; layers <= MAX_VOLUME_LAYERS; layers++) {
+                volumeSliceMeshes[layers] = own(createVolumeSliceMesh(layers));
+            }
+            sunShadowRibbonMesh = own(createSunShadowRibbonMesh());
+            ShaderProgram.pedantic = false;
+            ShaderManager shaderManager = ShaderManager.getInstance();
+            heightMapShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "sprite"),
+                shaderManager.getFragmentContext(SHADER_PATH + "height_map"),
+                "Height map");
+            entityMaskShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "sprite"),
+                shaderManager.getFragmentContext(SHADER_PATH + "entity_mask"),
+                "Entity mask");
+            projectedShadowShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "projected_shadow"),
+                shaderManager.getFragmentContext(SHADER_PATH + "projected_shadow"),
+                "Projected shadow");
+            sunShadowRibbonShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "shadow_ribbon"),
+                shaderManager.getFragmentContext(SHADER_PATH + "shadow_ribbon"),
+                "Sun shadow ribbon");
+            receiverShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "receiver"),
+                shaderManager.getFragmentContext(SHADER_PATH + "receiver"),
+                "Receiver shadow");
+            lightSpaceCasterShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "light_space_caster"),
+                shaderManager.getFragmentContext(SHADER_PATH + "light_space_caster"),
+                "Light-space caster");
+            lightSpaceGroundShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "screen"),
+                shaderManager.getFragmentContext(SHADER_PATH + "light_space_ground"),
+                "Light-space ground");
+            sunCompositeShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "screen"),
+                shaderManager.getFragmentContext(SHADER_PATH + "sun_composite"),
+                "Sun composite");
+            pointCompositeShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "screen"),
+                shaderManager.getFragmentContext(SHADER_PATH + "point_composite"),
+                "Point composite");
+            depthDownsampleShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "screen"),
+                shaderManager.getFragmentContext(SHADER_PATH + "depth_downsample"),
+                "Shadow depth downsample");
+            depthExpandShader = compileShader(
+                shaderManager.getVertexContext(SHADER_PATH + "screen"),
+                shaderManager.getFragmentContext(SHADER_PATH + "depth_expand"),
+                "Shadow depth expansion");
+            resizeBuffersIfNeeded();
+            validateRenderOrder();
+            Gdx.app.log(TAG, "Top-down shadow system initialized");
+        } catch (RuntimeException | Error failure) {
+            try { dispose(); } catch (RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
         }
-        sunShadowRibbonMesh = createSunShadowRibbonMesh();
-        ShaderProgram.pedantic = false;
-        ShaderManager shaderManager = ShaderManager.getInstance();
-        heightMapShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "sprite"),
-            shaderManager.getFragmentContext(SHADER_PATH + "height_map"),
-            "Height map");
-        entityMaskShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "sprite"),
-            shaderManager.getFragmentContext(SHADER_PATH + "entity_mask"),
-            "Entity mask");
-        projectedShadowShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "projected_shadow"),
-            shaderManager.getFragmentContext(SHADER_PATH + "projected_shadow"),
-            "Projected shadow");
-        sunShadowRibbonShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "shadow_ribbon"),
-            shaderManager.getFragmentContext(SHADER_PATH + "shadow_ribbon"),
-            "Sun shadow ribbon");
-        receiverShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "receiver"),
-            shaderManager.getFragmentContext(SHADER_PATH + "receiver"),
-            "Receiver shadow");
-        lightSpaceCasterShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "light_space_caster"),
-            shaderManager.getFragmentContext(SHADER_PATH + "light_space_caster"),
-            "Light-space caster");
-        lightSpaceGroundShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "screen"),
-            shaderManager.getFragmentContext(SHADER_PATH + "light_space_ground"),
-            "Light-space ground");
-        sunCompositeShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "screen"),
-            shaderManager.getFragmentContext(SHADER_PATH + "sun_composite"),
-            "Sun composite");
-        pointCompositeShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "screen"),
-            shaderManager.getFragmentContext(SHADER_PATH + "point_composite"),
-            "Point composite");
-        depthDownsampleShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "screen"),
-            shaderManager.getFragmentContext(SHADER_PATH + "depth_downsample"),
-            "Shadow depth downsample");
-        depthExpandShader = compileShader(
-            shaderManager.getVertexContext(SHADER_PATH + "screen"),
-            shaderManager.getFragmentContext(SHADER_PATH + "depth_expand"),
-            "Shadow depth expansion");
-        resizeBuffersIfNeeded();
-        validateRenderOrder();
-        Gdx.app.log(TAG, "Top-down shadow system initialized");
     }
 
     /** 检查阴影合成是否位于世界渲染之后。 */
@@ -836,24 +837,25 @@ public class TopDownShadowSystem extends BaseSystem {
             return false;
         }
 
-        OpaqueBounds opaqueBounds = getOpaqueBounds(region);
+        OpaqueRegionCache.Bounds opaqueBounds = opaqueRegions.get(region);
         float opaqueSpan = getProjectedVerticalSpanTexels(
             render, pos, region, extraY, footY,
-            opaqueBounds.left, opaqueBounds.right,
-            opaqueBounds.bottom, opaqueBounds.top);
+            opaqueBounds.left(), opaqueBounds.right(),
+            opaqueBounds.bottom(), opaqueBounds.top());
         if (opaqueSpan >= SUN_RIBBON_SWITCH_TEXELS) {
             return false;
         }
 
-        int hullSize = buildSunShadowRibbon(
+        int hullSize = sunGeometry.buildRibbon(
             render, pos, region, extraY, footY,
-            opaqueBounds.left, opaqueBounds.right,
-            opaqueBounds.bottom, opaqueBounds.top,
-            getShadowDepth(entityId, region));
+            opaqueBounds.left(), opaqueBounds.right(),
+            opaqueBounds.bottom(), opaqueBounds.top(),
+            getShadowDepth(entityId, region), sunLight.getShadowDirection(lightDirection),
+            sunLight.getShadowLengthScale());
         if (hullSize < 3) {
             return false;
         }
-        sunShadowRibbonMesh.setVertices(ribbonHull, 0, hullSize * 2);
+        sunShadowRibbonMesh.setVertices(sunGeometry.vertices(), 0, hullSize * 2);
         sunShadowRibbonShader.bind();
         sunShadowRibbonShader.setUniformMatrix(
             "u_projTrans", cameraSystem.camera.combined);
@@ -862,238 +864,14 @@ public class TopDownShadowSystem extends BaseSystem {
         return true;
     }
 
+    /** 纹素阈值属于渲染缓冲策略，几何计算只返回世界跨度。 */
     private float getProjectedVerticalSpanTexels(
         Render render, Pos pos, TextureRegion region, float extraY,
         float footY, float left, float right, float bottom, float top) {
-        projectBounds(render, pos, region, extraY, footY,
-            left, right, bottom, top, 0f);
-        float minimumY = Float.POSITIVE_INFINITY;
-        float maximumY = Float.NEGATIVE_INFINITY;
-        for (int i = 1; i < 8; i += 2) {
-            minimumY = Math.min(minimumY, ribbonCandidates[i]);
-            maximumY = Math.max(maximumY, ribbonCandidates[i]);
-        }
-        float visibleWorldHeight = cameraSystem.camera.viewportHeight
-            * cameraSystem.camera.zoom;
-        float worldPerTexel = visibleWorldHeight / groundShadowSource.getHeight();
-        return (maximumY - minimumY) / Math.max(worldPerTexel, 0.0001f);
-    }
-
-    private int buildSunShadowRibbon(
-        Render render, Pos pos, TextureRegion region, float extraY,
-        float footY, float left, float right, float bottom, float top,
-        float depth) {
-        projectBounds(render, pos, region, extraY, footY,
-            left, right, bottom, top,
-            Math.max(depth, 0.0001f) * 0.5f);
-        sortRibbonCandidates();
-        return buildRibbonConvexHull();
-    }
-
-    private void projectBounds(
-        Render render, Pos pos, TextureRegion region, float extraY,
-        float footY, float left, float right, float bottom, float top,
-        float halfDepth) {
-        if (render.flipX) {
-            float originalLeft = left;
-            left = region.getRegionWidth() - right;
-            right = region.getRegionWidth() - originalLeft;
-        }
-        if (render.flipY) {
-            float originalBottom = bottom;
-            bottom = region.getRegionHeight() - top;
-            top = region.getRegionHeight() - originalBottom;
-        }
-
-        ribbonLocal[0] = left;
-        ribbonLocal[1] = bottom;
-        ribbonLocal[2] = right;
-        ribbonLocal[3] = bottom;
-        ribbonLocal[4] = right;
-        ribbonLocal[5] = top;
-        ribbonLocal[6] = left;
-        ribbonLocal[7] = top;
-        float drawX = worldScale * (pos.x + render.offsetX);
-        float drawY = worldScale * (pos.y + render.offsetY + extraY);
-        float scaleX = worldScale * render.scaleWidth;
-        float scaleY = worldScale * render.scaleHeight;
-        float cosine = MathUtils.cosDeg(render.rotation);
-        float sine = MathUtils.sinDeg(render.rotation);
-        sunLight.getShadowDirection(lightDirection);
-        float shadowLengthScale = sunLight.getShadowLengthScale();
-        for (int i = 0; i < 4; i++) {
-            float relativeX = (ribbonLocal[i * 2] - render.originX) * scaleX;
-            float relativeY = (ribbonLocal[i * 2 + 1] - render.originY) * scaleY;
-            float spriteX = drawX + render.originX
-                + relativeX * cosine - relativeY * sine;
-            float spriteY = drawY + render.originY
-                + relativeX * sine + relativeY * cosine;
-            float pixelHeight = Math.max(0f, spriteY - footY);
-            float projectedX = spriteX
-                + lightDirection.x * pixelHeight * shadowLengthScale;
-            float projectedY = footY
-                + lightDirection.y * pixelHeight * shadowLengthScale;
-            // 凸阴影带与普通投影使用相同锚点，向太阳移动半个纵深。
-            projectedX -= lightDirection.x * halfDepth;
-            projectedY -= lightDirection.y * halfDepth;
-            if (halfDepth <= 0f) {
-                ribbonCandidates[i * 2] = projectedX;
-                ribbonCandidates[i * 2 + 1] = projectedY;
-            } else {
-                int lower = i * 4;
-                ribbonCandidates[lower] = projectedX;
-                ribbonCandidates[lower + 1] = projectedY - halfDepth;
-                ribbonCandidates[lower + 2] = projectedX;
-                ribbonCandidates[lower + 3] = projectedY + halfDepth;
-            }
-        }
-    }
-
-    private void sortRibbonCandidates() {
-        for (int i = 1; i < 8; i++) {
-            float x = ribbonCandidates[i * 2];
-            float y = ribbonCandidates[i * 2 + 1];
-            int insertion = i;
-            while (insertion > 0 && isPointAfter(
-                ribbonCandidates[(insertion - 1) * 2],
-                ribbonCandidates[(insertion - 1) * 2 + 1], x, y)) {
-                ribbonCandidates[insertion * 2] =
-                    ribbonCandidates[(insertion - 1) * 2];
-                ribbonCandidates[insertion * 2 + 1] =
-                    ribbonCandidates[(insertion - 1) * 2 + 1];
-                insertion--;
-            }
-            ribbonCandidates[insertion * 2] = x;
-            ribbonCandidates[insertion * 2 + 1] = y;
-        }
-    }
-
-    private boolean isPointAfter(float firstX, float firstY,
-                                 float secondX, float secondY) {
-        return firstX > secondX || (firstX == secondX && firstY > secondY);
-    }
-
-    private int buildRibbonConvexHull() {
-        int hullSize = 0;
-        for (int i = 0; i < 8; i++) {
-            while (hullSize >= 2 && crossHullPoint(
-                hullSize - 2, hullSize - 1,
-                ribbonCandidates[i * 2], ribbonCandidates[i * 2 + 1]) <= 0f) {
-                hullSize--;
-            }
-            setHullPoint(hullSize++, ribbonCandidates[i * 2],
-                ribbonCandidates[i * 2 + 1]);
-        }
-        int lowerSize = hullSize;
-        for (int i = 6; i >= 0; i--) {
-            while (hullSize > lowerSize && crossHullPoint(
-                hullSize - 2, hullSize - 1,
-                ribbonCandidates[i * 2], ribbonCandidates[i * 2 + 1]) <= 0f) {
-                hullSize--;
-            }
-            setHullPoint(hullSize++, ribbonCandidates[i * 2],
-                ribbonCandidates[i * 2 + 1]);
-        }
-        return Math.max(0, hullSize - 1);
-    }
-
-    private float crossHullPoint(int first, int second, float x, float y) {
-        float firstX = ribbonHull[first * 2];
-        float firstY = ribbonHull[first * 2 + 1];
-        float secondX = ribbonHull[second * 2];
-        float secondY = ribbonHull[second * 2 + 1];
-        return (secondX - firstX) * (y - firstY)
-            - (secondY - firstY) * (x - firstX);
-    }
-
-    private void setHullPoint(int index, float x, float y) {
-        ribbonHull[index * 2] = x;
-        ribbonHull[index * 2 + 1] = y;
-    }
-
-    private OpaqueBounds getOpaqueBounds(TextureRegion region) {
-        Texture texture = region.getTexture();
-        long key = getRegionKey(region);
-        LongMap<OpaqueBounds> textureBounds = opaqueBoundsCache.get(texture);
-        if (textureBounds != null) {
-            OpaqueBounds cached = textureBounds.get(key);
-            if (cached != null) {
-                return cached;
-            }
-        } else {
-            textureBounds = new LongMap<>();
-            opaqueBoundsCache.put(texture, textureBounds);
-        }
-
-        OpaqueBounds bounds = readOpaqueBounds(region);
-        textureBounds.put(key, bounds);
-        return bounds;
-    }
-
-    private OpaqueBounds readOpaqueBounds(TextureRegion region) {
-        Texture texture = region.getTexture();
-        if (unreadableOpaqueTextures.contains(texture)) {
-            return OpaqueBounds.full(region);
-        }
-        TextureData data = texture.getTextureData();
-        if (data == null || data.getType() != TextureData.TextureDataType.Pixmap) {
-            logUnreadableTexture(texture, "Texture data is not pixmap-backed");
-            return OpaqueBounds.full(region);
-        }
-
-        Pixmap pixmap = null;
-        try {
-            if (!data.isPrepared()) {
-                data.prepare();
-            }
-            pixmap = data.consumePixmap();
-            int minimumX = region.getRegionWidth();
-            int minimumY = region.getRegionHeight();
-            int maximumX = -1;
-            int maximumY = -1;
-            int startX = region.getRegionX();
-            int startY = region.getRegionY();
-            for (int y = 0; y < region.getRegionHeight(); y++) {
-                for (int x = 0; x < region.getRegionWidth(); x++) {
-                    int alpha = pixmap.getPixel(startX + x, startY + y) & 0xff;
-                    if (alpha / 255f < OPAQUE_ALPHA_THRESHOLD) {
-                        continue;
-                    }
-                    minimumX = Math.min(minimumX, x);
-                    minimumY = Math.min(minimumY, y);
-                    maximumX = Math.max(maximumX, x);
-                    maximumY = Math.max(maximumY, y);
-                }
-            }
-            if (maximumX < minimumX || maximumY < minimumY) {
-                return OpaqueBounds.full(region);
-            }
-            return new OpaqueBounds(
-                minimumX, maximumX + 1f,
-                region.getRegionHeight() - maximumY - 1f,
-                region.getRegionHeight() - minimumY);
-        } catch (RuntimeException exception) {
-            logUnreadableTexture(texture,
-                "Unable to read texture alpha: " + exception.getMessage());
-            return OpaqueBounds.full(region);
-        } finally {
-            if (pixmap != null && data.disposePixmap()) {
-                pixmap.dispose();
-            }
-        }
-    }
-
-    private void logUnreadableTexture(Texture texture, String message) {
-        if (unreadableOpaqueTextures.add(texture)) {
-            Gdx.app.log(TAG, message + "; using the full texture region");
-        }
-    }
-
-    private long getRegionKey(TextureRegion region) {
-        return ((long) region.getRegionX() & 0xffffL) << 48
-            | ((long) region.getRegionY() & 0xffffL) << 32
-            | ((long) region.getRegionWidth() & 0xffffL) << 16
-            | ((long) region.getRegionHeight() & 0xffffL);
+        float span = sunGeometry.verticalSpan(render, pos, region, extraY, footY,
+            left, right, bottom, top, sunLight.getShadowDirection(lightDirection), sunLight.getShadowLengthScale());
+        float visibleWorldHeight = cameraSystem.camera.viewportHeight * cameraSystem.camera.zoom;
+        return span / Math.max(visibleWorldHeight / groundShadowSource.getHeight(), 0.0001f);
     }
 
     private void setTextureCoordinates(ShaderProgram shader, Render render,
@@ -1336,6 +1114,7 @@ public class TopDownShadowSystem extends BaseSystem {
         receiverShadowMask = createBuffer(Texture.TextureFilter.Linear);
         sunShadowMap = new FrameBuffer(
             Pixmap.Format.RGBA8888, bufferWidth, bufferHeight, true);
+        frameBuffers.add(sunShadowMap);
         sunShadowMap.getColorBufferTexture().setFilter(
             Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
     }
@@ -1351,21 +1130,16 @@ public class TopDownShadowSystem extends BaseSystem {
     private FrameBuffer createBuffer(int height, Texture.TextureFilter filter) {
         FrameBuffer buffer = new FrameBuffer(
             Pixmap.Format.RGBA8888, bufferWidth, height, false);
+        frameBuffers.add(buffer);
         buffer.getColorBufferTexture().setFilter(filter, filter);
         return buffer;
     }
 
+    /** 缓冲尺寸变化或初始化失败时释放已经创建的部分，不依赖某个哨兵字段是否赋值。 */
     private void disposeBuffers() {
-        if (heightMap != null) {
-            heightMapSource.dispose();
-            heightMap.dispose();
-            depthDownsampleBuffer.dispose();
-            entityMask.dispose();
-            groundShadowSource.dispose();
-            groundShadowMask.dispose();
-            receiverShadowMask.dispose();
-            sunShadowMap.dispose();
-        }
+        while (frameBuffers.notEmpty()) frameBuffers.pop().dispose();
+        heightMapSource = heightMap = depthDownsampleBuffer = entityMask = null;
+        groundShadowSource = groundShadowMask = receiverShadowMask = sunShadowMap = null;
     }
 
     private void clearBuffer() {
@@ -1373,19 +1147,7 @@ public class TopDownShadowSystem extends BaseSystem {
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
     }
 
-    private Mesh createScreenQuad() {
-        Mesh mesh = new Mesh(true, 4, 0,
-            new VertexAttribute(VertexAttributes.Usage.Position, 2, "a_position"),
-            new VertexAttribute(
-                VertexAttributes.Usage.TextureCoordinates, 2, "a_texCoord"));
-        mesh.setVertices(new float[]{
-            -1f, -1f, 0f, 0f,
-            1f, -1f, 1f, 0f,
-            1f, 1f, 1f, 1f,
-            -1f, 1f, 0f, 1f
-        });
-        return mesh;
-    }
+
 
     private Mesh createProjectedShadowMesh(int segments) {
         int vertexCount = (segments + 1) * 2;
@@ -1464,58 +1226,24 @@ public class TopDownShadowSystem extends BaseSystem {
             shader.dispose();
             throw new IllegalStateException(name + " shader compile failed");
         }
-        return shader;
+        return own(shader);
     }
 
     public TopDownSunLight getSunLight() {
         return sunLight;
     }
 
-    @Override
-    protected void dispose() {
-        disposeBuffers();
-        if (pointRayHandler != null) {
-            pointRayHandler.dispose();
-        }
-        if (spriteBatch != null) {
-            spriteBatch.dispose();
-            screenQuad.dispose();
-            sunProjectedShadowMesh.dispose();
-            projectedShadowMesh.dispose();
-            for (int layers = 2; layers <= MAX_VOLUME_LAYERS; layers++) {
-                volumeSliceMeshes[layers].dispose();
-            }
-            sunShadowRibbonMesh.dispose();
-            heightMapShader.dispose();
-            entityMaskShader.dispose();
-            projectedShadowShader.dispose();
-            sunShadowRibbonShader.dispose();
-            receiverShader.dispose();
-            lightSpaceCasterShader.dispose();
-            lightSpaceGroundShader.dispose();
-            sunCompositeShader.dispose();
-            pointCompositeShader.dispose();
-            depthDownsampleShader.dispose();
-            depthExpandShader.dispose();
-        }
+    /** 登记系统独占的固定资源，释放顺序与创建顺序相反，FBO另随尺寸独立管理。 */
+    private <T extends com.badlogic.gdx.utils.Disposable> T own(T resource) {
+        renderResources.add(resource);
+        return resource;
     }
 
-    private static final class OpaqueBounds {
-        private final float left;
-        private final float right;
-        private final float bottom;
-        private final float top;
-
-        private OpaqueBounds(float left, float right, float bottom, float top) {
-            this.left = left;
-            this.right = right;
-            this.bottom = bottom;
-            this.top = top;
-        }
-
-        private static OpaqueBounds full(TextureRegion region) {
-            return new OpaqueBounds(0f, region.getRegionWidth(), 0f,
-                region.getRegionHeight());
-        }
+    /** 退出与初始化异常共用释放入口，重复调用不再释放同一资源，不触碰共享纹理。 */
+    @Override
+    protected void dispose() {
+        opaqueRegions.clear();
+        try { disposeBuffers(); }
+        finally { while (renderResources.notEmpty()) renderResources.pop().dispose(); }
     }
 }
