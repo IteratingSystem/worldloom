@@ -59,7 +59,7 @@ final class Box2dNavigationRasterizer {
                 float minY = row * tileHeight + inset;
                 float maxX = (column + 1) * tileWidth - inset;
                 float maxY = (row + 1) * tileHeight - inset;
-                if (org.worldloom.box2d.FixtureGeometry.intersects(fixture,
+                if (org.worldloom.box2d.FixtureGeometry.overlaps(fixture,
                     new com.badlogic.gdx.math.Rectangle(minX * worldScale, minY * worldScale,
                         (maxX - minX) * worldScale, (maxY - minY) * worldScale))) {
                     blocked[row * width + column] = true;

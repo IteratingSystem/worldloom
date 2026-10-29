@@ -1007,7 +1007,7 @@ WorldloomEngine engine = Worldloom.engineBuilder()
 - 世界快照捕获及实体恢复同样隔离可变数据：捕获后的镜像不随当前库存继续变化，多次生成也不会共享模板的集合。模板读取接口返回的数据仍应视为只读，不能先修改模板再调用buildEntity。
 - 状态机恢复只设置当前状态，不自动调用 `enter`。需要恢复的 UI、相机、输入或物理激活状态应由游戏在所有实体构建完成后协调，避免对尚未初始化的其他组件产生依赖。
 
-`FixtureGeometry.overlaps(fixture, rectangle)`精确检查圆、凸多边形、边及闭合/开放链；矩形使用Box2D世界单位，传感器等业务过滤由调用方处理。`intersects`额外计入多边形边缘接触，圆仍要求实际重叠；导航保留面形状格网内缩容差，并在入口将像素矩形换算为物理单位。放置等要求实际面积重叠的业务使用`overlaps`，不要混用边界策略。
+`FixtureGeometry.overlaps(fixture, rectangle)`精确检查圆、凸多边形、边及闭合/开放链；矩形使用Box2D世界单位，传感器等业务过滤由调用方处理。圆相切不算相交，多边形及线段接触边界算相交，保持原有LibGDX判定。导航继续在调用前施加面形状格网内缩容差并换算物理单位；底层共用几何，业务容差留在调用方，不额外创建策略类型。
 
 `B2dBody.getContactFixtures` 只返回 `Contact.isTouching()` 为真的实际接触；Box2D broadphase 保留的近邻候选不算交互接触。
 
