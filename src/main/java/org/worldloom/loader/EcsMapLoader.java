@@ -5,13 +5,17 @@ import com.badlogic.gdx.assets.loaders.FileHandleResolver;
 import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.maps.MapObject;
+import com.badlogic.gdx.maps.MapObjects;
 import com.badlogic.gdx.maps.MapProperties;
+import com.badlogic.gdx.maps.objects.RectangleMapObject;
+import com.badlogic.gdx.maps.tiled.TiledMap;
 import com.badlogic.gdx.maps.tiled.TmxMapLoader;
 import com.badlogic.gdx.utils.GdxRuntimeException;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Json;
 import com.badlogic.gdx.utils.XmlReader;
 import org.worldloom.manager.JsonManager;
+import org.worldloom.map.CapsuleMapObject;
 
 
 /**
@@ -32,6 +36,22 @@ public class EcsMapLoader extends TmxMapLoader {
         propClassHandle = Gdx.files.internal(propTypePath);
         Json json = JsonManager.getJson();
         propertyTypes = json.fromJson(PropertyType[].class,propClassHandle);
+    }
+
+    /** 复用标准对象加载后保留胶囊形身份，并同步编号引用，防止被当成矩形区域。 */
+    @Override
+    protected void loadObject(TiledMap map, MapObjects objects, XmlReader.Element element, float heightInPixels) {
+        int before = objects.getCount();
+        super.loadObject(map, objects, element, heightInPixels);
+        if (element.getChildByName("capsule") != null && objects.getCount() > before) {
+            MapObject loaded = objects.get(before);
+            if (!(loaded instanceof RectangleMapObject rectangle))
+                throw new GdxRuntimeException("胶囊对象形状冲突：" + element.getAttribute("id", "?"));
+            CapsuleMapObject capsule = new CapsuleMapObject(rectangle);
+            objects.remove(before);
+            objects.add(capsule);
+            idToObject.put(element.getIntAttribute("id", 0), capsule);
+        }
     }
 
     @Override

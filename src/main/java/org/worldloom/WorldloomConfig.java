@@ -19,6 +19,7 @@ public final class WorldloomConfig {
     private final ObjectMap<String, String> entityLayers;
     private final ObjectMap<String, String[]> physicsLayers;
     private final ObjectMap<String, String[]> hiddenLayers;
+    private final ObjectMap<String, String[]> areaLayers;
     private final ObjectMap<String, String> navigationRoadLayers;
     private final Array<Class<? extends Component>> autoComponents;
     private final Array<String> residentMaps;
@@ -46,6 +47,7 @@ public final class WorldloomConfig {
         entityLayers = copyStringMap(builder.entityLayers);
         physicsLayers = copyArrayMap(builder.physicsLayers);
         hiddenLayers = copyArrayMap(builder.hiddenLayers);
+        areaLayers = copyArrayMap(builder.areaLayers);
         navigationRoadLayers = copyStringMap(builder.navigationRoadLayers);
         autoComponents = new Array<>(builder.autoComponents);
         residentMaps = new Array<>(builder.residentMaps);
@@ -78,6 +80,8 @@ public final class WorldloomConfig {
     public ObjectMap<String, String[]> getPhysicsLayers() { return copyArrayMap(physicsLayers); }
     /** 返回隐藏层配置副本，例如交给地图系统后隐藏 island 的 SEA。 */
     public ObjectMap<String, String[]> getHiddenLayers() { return copyArrayMap(hiddenLayers); }
+    /** 返回显式区域对象层配置副本；层名不要求特定前缀。 */
+    public ObjectMap<String, String[]> getAreaLayers() { return copyArrayMap(areaLayers); }
     public ObjectMap<String, String> getNavigationRoadLayers() {
         return copyStringMap(navigationRoadLayers);
     }
@@ -138,6 +142,7 @@ public final class WorldloomConfig {
         private final ObjectMap<String, String> entityLayers = new ObjectMap<>();
         private final ObjectMap<String, String[]> physicsLayers = new ObjectMap<>();
         private final ObjectMap<String, String[]> hiddenLayers = new ObjectMap<>();
+        private final ObjectMap<String, String[]> areaLayers = new ObjectMap<>();
         private final ObjectMap<String, String> navigationRoadLayers = new ObjectMap<>();
         private final Array<Class<? extends Component>> autoComponents = new Array<>();
         private final Array<String> residentMaps = new Array<>();
@@ -246,6 +251,18 @@ public final class WorldloomConfig {
             return this;
         }
 
+        /** 登记地图区域对象层，同地图重复调用覆盖前值；区域与实体/物理层独立，AREA只是命名建议。 */
+        public Builder areaLayers(String mapName, String... layerNames) {
+            if (mapName == null || mapName.isBlank() || layerNames == null)
+                throw new IllegalArgumentException("区域地图和图层列表不能为空");
+            ObjectSet<String> distinct = new ObjectSet<>();
+            for (String layer : layerNames)
+                if (layer == null || layer.isBlank() || !distinct.add(layer))
+                    throw new IllegalArgumentException("区域层名称不能为空或重复");
+            areaLayers.put(mapName, layerNames.clone());
+            return this;
+        }
+
         /** 指定某张地图中用于降低寻路代价的道路瓦片层。 */
         public Builder navigationRoadLayer(String mapName, String layerName) {
             navigationRoadLayers.put(mapName, layerName);
@@ -280,6 +297,17 @@ public final class WorldloomConfig {
             }
             if (initialMap == null || initialMap.isBlank()) {
                 throw new IllegalStateException("initial map cannot be blank");
+            }
+            for (ObjectMap.Entry<String, String[]> entry : areaLayers) {
+                if (mapRoles.get(entry.key, MapRole.WORLD) == MapRole.TEMPLATE)
+                    throw new IllegalStateException("模板地图不能登记运行区域：" + entry.key);
+                for (String layer : entry.value) {
+                    if (layer.equals(entityLayers.get(entry.key)))
+                        throw new IllegalStateException("区域层与实体层必须分开：" + entry.key + "/" + layer);
+                    String[] physics = physicsLayers.get(entry.key);
+                    if (physics != null) for (String physical : physics) if (layer.equals(physical))
+                        throw new IllegalStateException("区域层不能同时创建物理碰撞：" + entry.key + "/" + layer);
+                }
             }
             for (ObjectMap.Entry<String, MapRole> entry : mapRoles) {
                 if (!entityLayers.containsKey(entry.key))

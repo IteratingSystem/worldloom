@@ -189,6 +189,7 @@ AssetManager.getInstance().dispose();
 | `initialMap("defaultMap")` | `defaultMap` | 新游戏初始地图 |
 | `skin("skin/main.json")` | `skin/main.json` | Scene2D Skin 路径 |
 | `entityLayer(map, layer)` | 空 | 每张地图的实体对象层 |
+| `areaLayers(map, layers...)` | 空 | 显式登记独立区域对象层，名称不限制前缀，提供按图层/标签/编号及几何查询 |
 | `physicsLayers(map, layers...)` | 空 | 每张地图的静态物理层 |
 | `hiddenLayers(map, layers...)` | 空 | 加载后不由普通地图渲染器绘制的图层；瓦片数据仍可供系统读取 |
 | `autoComponents(...)` | `Pos/Render/ZIndex` | 地图对象默认创建的组件 |
@@ -1535,3 +1536,40 @@ WorldloomConfig.builder()
 `DebuffSystem`保存稳定身份关联的效果DTO，包括名称、remaining、tickElapsed及data。恢复只调用`DebuffHandler.onRestored`重建临时修饰器，不重复`onApplied`。游戏可用`shouldUpdate(context)`禁止复制代理自行结算权威伤害；同一主机全部地图仍正常推进。周期处理每帧最多32次，剩余债务保留到后续帧，回调内治疗/清除不会继续触发已移除效果。
 
 自定义系统需要边界快照时可实现`SystemSnapshotLifecycle`，在`beforeSnapshot()`刷新公开`@SerializeParam` DTO字段，`afterSnapshotRestore()`登记恢复工作；后者发生时实体可能尚未分配，需等加载屏障结束后再解析稳定身份。系统复杂集合优先用明确DTO/LibGDX Array，不能把Property.value往返后的未定型数组直接赋给Java数组字段。
+
+
+## 25. 地图区域对象层（4.11.0）
+
+业务通过应用配置明确登记区域层，与entityLayer/physicsLayers相同；不自动按名称扫描。AREA_xxx只是编辑命名建议，任意名称均可。同地图重复调用areaLayers会覆盖前值。
+
+```java
+WorldloomConfig.builder()
+    .initialMap("island")
+    .entityLayer("island", "ENTITY")
+    .areaLayers("island", "AREA_BUILD", "AREA_NO_BUILD")
+    .entityLayer("inside", "ENTITY")
+    .areaLayers("inside", "ROOMS")
+    .build();
+```
+
+Tiled里单独新建对象层，画矩形、多边形、圆/椭圆或胶囊形；不要把区域和ENTITY混在一层，也不要将区域层登记为物理层。引擎会拒绝这两种混用、缺层/重名层、瓦片/组图层及无面积的对象；点、折线、文本和瓦片对象不作为区域。嵌套组下的对象层同样可登记，但已登记层名必须在该地图内唯一。多边形使用不自交的简单多边形。
+
+引擎自动安装随World管理的MapAreaSystem，在玩法初始化前构建静态索引。Tiled对象name作为名称标签，可以为空或重复；精确定位用地图+对象id。层和对象是否可见不影响查询，不创建ECS实体或Box2D对象，不逐帧更新，不将索引存入存档。重开世界会按当前地图资源重建；区域的权限/所有权、禁建优先级及玩法意义由业务维护。
+
+```java
+MapAreaSystem regions = world.getSystem(MapAreaSystem.class);
+MapAreas areas = regions.map("inside"); // 指定地图，不读取相机/观察图
+// 或 regions.forEntity(entityId)，按MapMembership实际归属定位
+List<MapArea> rooms = areas.layer("ROOMS");
+List<MapArea> tagged = areas.named("BEDROOM");
+MapArea exact = areas.get(23); // 未找到返回null
+boolean pointInside = areas.contains("ROOMS", pos.x, pos.y);
+boolean wholeInside = areas.contains("ROOMS", objectBounds);
+boolean touchesForbidden = areas.overlaps("AREA_NO_BUILD", objectBounds);
+```
+
+MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.system。all/layer/named返回不可变集合；MapArea保留mapId、layerName、objectId、name，bounds()返回位置/尺寸副本。未登记图层和未登记区域的运行地图返回空查询；不回退其它地图，不因AREA前缀擅自读取。运行图限制遵循地图用途和常驻目录。
+
+所有几何入口均使用与Pos一致的Y向上源像素；世界相机/物理坐标须先除以worldScale。复用TmxMapLoader已完成的Y翻转，补齐对象顺时针旋转及父组/本层偏移，不二次翻转。矩形/椭圆/胶囊按Tiled左上角为旋转轴；胶囊半径为短边的一半，长边决定中心线方向，等宽高时为圆。EcsMapLoader保留CapsuleMapObject身份并同步对象编号引用，避免LibGDX 1.14.2将其当矩形；此支持用于区域查询，不新增胶囊Box2D夹具。支持旋转椭圆/胶囊精确查询和凹多边形完整包含，不能用AABB或仅四角判断替代。点在边界算包含，矩形完整包含允许贴边，相交查询将触边算相交；非有限或零面积查询返回false。
+
+同层多个区域分别判断，完整矩形必须落在同一个区域内，不自动将相邻区域拼为许可范围。建议公共地图默认禁止建造，游戏PlacementSystem先查询允许区，再查禁建区和地面/碰撞/距离等条件；不要让引擎硬编码BUILD之类的业务含义。

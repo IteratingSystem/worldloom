@@ -38,6 +38,7 @@ import org.worldloom.system.LayerSamplingSystem;
 import org.worldloom.system.LightSystem;
 import org.worldloom.system.MapTransitionSystem;
 import org.worldloom.system.MapIdentitySystem;
+import org.worldloom.system.MapAreaSystem;
 import org.worldloom.system.NavigationSystem;
 import org.worldloom.system.OnInteractSystem;
 import org.worldloom.system.PointLightSystem;
@@ -100,6 +101,7 @@ public final class ArtemisInstaller {
             config.getEntityLayers(),
             config.getPhysicsLayers(),
             config.getHiddenLayers()));
+        builder.with(new MapAreaSystem());
         add(builder, gameSystems.systemsFor(EnginePhase.PRE_PHYSICS));
         builder.with(new B2dSystem(
             config.getGravityX(),
