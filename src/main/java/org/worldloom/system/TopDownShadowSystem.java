@@ -21,6 +21,7 @@ import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.BufferUtils;
 import com.badlogic.gdx.utils.IntArray;
+import com.badlogic.gdx.utils.ObjectMap;
 import net.mostlyoriginal.api.plugin.extendedcomponentmapper.M;
 import org.worldloom.component.Inert;
 import org.worldloom.component.Pos;
@@ -34,6 +35,7 @@ import org.worldloom.light.TopDownShadowLight;
 import org.worldloom.light.TopDownSunLight;
 import org.worldloom.light.OpaqueRegionCache;
 import org.worldloom.light.SunShadowGeometry;
+import org.worldloom.light.ShadowVolumeGeometry;
 import org.worldloom.manager.ShaderManager;
 import org.worldloom.render.MapVisibility;
 
@@ -64,6 +66,7 @@ public class TopDownShadowSystem extends BaseSystem {
     private final IntBuffer glStateBuffer = BufferUtils.newIntBuffer(1);
     private final int[] previousTextureBindings = new int[4];
     private final OpaqueRegionCache opaqueRegions = new OpaqueRegionCache();
+    private final ObjectMap<ShadowVolumeGeometry, Mesh> volumeMeshes = new ObjectMap<>();
     private final SunShadowGeometry sunGeometry;
     private final com.badlogic.gdx.utils.Array<com.badlogic.gdx.utils.Disposable> renderResources = new com.badlogic.gdx.utils.Array<>();
     private final com.badlogic.gdx.utils.Array<FrameBuffer> frameBuffers = new com.badlogic.gdx.utils.Array<>();
@@ -170,9 +173,6 @@ public class TopDownShadowSystem extends BaseSystem {
             screenQuad = own(org.worldloom.render.RenderResources.createScreenQuad());
             sunProjectedShadowMesh = own(createProjectedShadowMesh(1));
             projectedShadowMesh = own(createProjectedShadowMesh(SHADOW_SEGMENTS));
-            for (int layers = 2; layers <= MAX_VOLUME_LAYERS; layers++) {
-                volumeSliceMeshes[layers] = own(createVolumeSliceMesh(layers));
-            }
             sunShadowRibbonMesh = own(createSunShadowRibbonMesh());
             ShaderProgram.pedantic = false;
             ShaderManager shaderManager = ShaderManager.getInstance();
@@ -522,11 +522,17 @@ public class TopDownShadowSystem extends BaseSystem {
         lightSpaceCasterShader.bind();
         lightSpaceCasterShader.setUniformi("u_texture", 0);
         setLightSpaceUniforms(lightSpaceCasterShader);
-        for (int i = 0; i < sortedShadowEntities.size; i++) {
-            renderVolumeEntity(sortedShadowEntities.get(i));
+        boolean culling = Gdx.gl.glIsEnabled(GL20.GL_CULL_FACE);
+        Gdx.gl.glDisable(GL20.GL_CULL_FACE);
+        try {
+            for (int i = 0; i < sortedShadowEntities.size; i++) {
+                renderVolumeEntity(sortedShadowEntities.get(i));
+            }
+        } finally {
+            if (culling) Gdx.gl.glEnable(GL20.GL_CULL_FACE);
+            Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
+            sunShadowMap.end();
         }
-        Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
-        sunShadowMap.end();
     }
 
     /**
@@ -612,17 +618,15 @@ public class TopDownShadowSystem extends BaseSystem {
             soarHeight, getFootY(entityId));
     }
 
+    /** 将闭合轮廓投影体写入原深度图，地面与对象受影共用同一遮挡结果。 */
     private void renderVolumeRegion(int entityId, Render render, Pos pos,
                                     TextureRegion region, float extraY,
                                     float footY) {
+        ShadowVolumeGeometry geometry = opaqueRegions.getVolume(region);
+        if (geometry != null && geometry.vertexCount() == 0) return;
         float drawX = worldScale * (pos.x + render.offsetX);
         float drawY = worldScale * (pos.y + render.offsetY + extraY);
         float depth = getShadowDepth(entityId, region);
-        float worldPerTexel = cameraSystem.camera.viewportHeight
-            * cameraSystem.camera.zoom / Math.max(1, bufferHeight);
-        int layers = MathUtils.clamp(
-            MathUtils.ceil(depth / Math.max(worldPerTexel, 0.0001f)) + 1,
-            2, MAX_VOLUME_LAYERS);
         lightSpaceCasterShader.setUniformf("u_drawPosition", drawX, drawY);
         lightSpaceCasterShader.setUniformf(
             "u_origin", render.originX, render.originY);
@@ -632,12 +636,34 @@ public class TopDownShadowSystem extends BaseSystem {
             worldScale * render.scaleWidth, worldScale * render.scaleHeight);
         lightSpaceCasterShader.setUniformf("u_rotation", render.rotation);
         lightSpaceCasterShader.setUniformf("u_footY", footY);
-        setTextureCoordinates(lightSpaceCasterShader, render, region);
+        lightSpaceCasterShader.setUniformf("u_spriteFlip",
+            render.flipX ? 1f : 0f, render.flipY ? 1f : 0f);
+        lightSpaceCasterShader.setUniformf("u_uvBottomLeft", region.getU(), region.getV2());
+        lightSpaceCasterShader.setUniformf("u_uvTopRight", region.getU2(), region.getV());
         setEntityIdUniform(lightSpaceCasterShader, entityId);
         lightSpaceCasterShader.setUniformf("u_shadowDepth", depth);
         region.getTexture().bind(0);
-        volumeSliceMeshes[layers].render(
-            lightSpaceCasterShader, GL20.GL_TRIANGLES);
+        Mesh mesh;
+        if (geometry == null) {
+            // 压缩或特殊纹理无法提取轮廓时沿用原切片路径，不制造实心矩形阴影。
+            float worldPerTexel = cameraSystem.camera.viewportHeight
+                * cameraSystem.camera.zoom / Math.max(1, bufferHeight);
+            int layers = MathUtils.clamp(
+                MathUtils.ceil(depth / Math.max(worldPerTexel, 0.0001f)) + 1, 2, MAX_VOLUME_LAYERS);
+            if (volumeSliceMeshes[layers] == null)
+                volumeSliceMeshes[layers] = own(createVolumeSliceMesh(layers));
+            mesh = volumeSliceMeshes[layers];
+        } else {
+            mesh = volumeMeshes.get(geometry);
+            if (mesh == null) {
+                mesh = own(new Mesh(true, geometry.vertexCount(), 0,
+                    new VertexAttribute(VertexAttributes.Usage.Position, 3, "a_position"),
+                    new VertexAttribute(VertexAttributes.Usage.TextureCoordinates, 2, "a_texCoord")));
+                mesh.setVertices(geometry.vertices());
+                volumeMeshes.put(geometry, mesh);
+            }
+        }
+        mesh.render(lightSpaceCasterShader, GL20.GL_TRIANGLES);
     }
 
     private void setLightSpaceUniforms(ShaderProgram shader) {
@@ -1242,6 +1268,8 @@ public class TopDownShadowSystem extends BaseSystem {
     /** 退出与初始化异常共用释放入口，重复调用不再释放同一资源，不触碰共享纹理。 */
     @Override
     protected void dispose() {
+        volumeMeshes.clear();
+        java.util.Arrays.fill(volumeSliceMeshes, null);
         opaqueRegions.clear();
         try { disposeBuffers(); }
         finally { while (renderResources.notEmpty()) renderResources.pop().dispose(); }

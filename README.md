@@ -703,7 +703,7 @@ WorldloomEngine engine = Worldloom.engineBuilder()
 
 在 Tiled 的 `propertytypes.json` 中添加并挂载以下组件：
 
-- `TopDownShadow`：无字段。挂载它的可见 `Render + Pos + ZIndex` 实体才会产生并接收俯视角阴影。
+- `TopDownShadow`：挂载它的可见 `Render + Pos + ZIndex` 实体产生并接收俯视角阴影。`depth > 0`指定源像素纵深；未设置时取纹理绘制宽度的五分之一。
 - `TopDownPointLight`：需要 `Pos`，可配置 `offsetX`、`offsetY`、`height`、`distance`、`color`、`rays` 和 `onOff`。
 
 点光源的实际世界位置是：
@@ -720,7 +720,7 @@ WorldloomEngine engine = Worldloom.engineBuilder()
 像素高度 = max(0, 像素世界Y - 脚点Y)
 ```
 
-因此 `ZIndex.offset` 同时确定排序脚点和阴影高度起点；脚点以下的非透明像素高度按 0 处理，脚点以上逐像素向上累加。系统每帧读取当前 `Render.keyframe`，也支持 `textureSheets`、缩放、翻转、旋转及动画偏移。
+因此 `ZIndex.offset` 同时确定排序脚点和阴影高度起点。高度图/接收片元将脚点以下高度按0处理；太阳投影体保留有符号高度以维持前后面与侧面连续，地下部分由深度比较排除，不会从地下向地上投影。系统每帧读取当前 `Render.keyframe`，支持 `textureSheets`、缩放、翻转、旋转及动画偏移。
 
 运行时可以调整太阳方位和高度：
 
@@ -730,7 +730,7 @@ shadows.getSunLight().setSunBearingDegree(35f);
 shadows.getSunLight().setElevationDegree(50f);
 ```
 
-太阳阴影长度不提供固定倍率配置，只由太阳高度计算。地面投影和精灵接收阴影使用同一个实时倍率；精灵自身与其它精灵也使用同一套高度采样规则，不再排除同一实体。`heightRange` 是高度图可表示的最大世界高度；超过它的高度会被截断。`resolutionScale` 控制阴影缓冲区相对窗口的分辨率，默认 `0.5`，提高它会改善边缘精度并增加填充与显存开销。
+太阳阴影长度不提供固定倍率配置，只由太阳高度计算。地面投影和精灵接收阴影共用光空间深度图；深度图比较排除同一实体，原高度图射线继续处理自阴影。`heightRange` 是高度图可表示的最大世界高度；超过它的高度会被截断。`resolutionScale` 控制阴影缓冲区相对窗口的分辨率，默认 `0.5`，提高它会改善边缘精度并增加填充与显存开销。
 
 俯视角光影使用的 GLSL 位于引擎资源目录 `shader/topdown/`。系统通过 `ShaderManager` 按完整 internal/classpath 路径加载，不再把 Shader 字符串写在 Java 类中。`ShaderManager` 仍优先使用游戏 `assets.txt` 中的同名文件，找不到时才回退读取引擎内置资源。
 
@@ -1580,5 +1580,14 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 ## 26. 绘制基础资源与阴影内部职责（4.12.0）
 
 - `RenderResources.createScreenQuad()`创建位置2维+UV2维的全屏四边形，按`GL_TRIANGLE_FAN`绘制；`createSoftMask(size, solidRadius)`创建白色径向软遮罩，半径占比范围`[0,1)`。每次返回独立GL资源，创建方在GL线程使用并释放；工厂不缓存资源，不接管AssetManager纹理。
-- `TopDownShadowSystem`保留ECS筛选、绘制顺序、阈值与合成；透明度扫描交给`OpaqueRegionCache`，太阳投影与凸包交给`SunShadowGeometry`。缓存只保留区域范围，`clear()`不释放共享纹理；投影数组由实例复用，只读且在下次计算前消费。
+- `TopDownShadowSystem`保留ECS筛选、绘制顺序、阈值与合成；透明度扫描交给`OpaqueRegionCache`，太阳投影与凸包交给`SunShadowGeometry`。缓存保留区域范围（4.13.0起也缓存透明度与轮廓），`clear()`不释放共享纹理；投影数组由实例复用，只读且在下次计算前消费。
 - 阴影固定资源按创建顺序登记、逆序释放；可重建FBO单独登记，初始化中断也能回收已成功创建的部分，重复释放不再销毁同一资源。纹理内容原位重载时需清空透明度缓存，普通切图复用缓存。
+
+
+### 26.1 连续太阳投影体（4.13.0）
+
+无需修改游戏组件或地图配置：太阳投影由平行切片改为精灵alpha轮廓挤出的闭合体。前后面继续采样精灵透明度，侧面沿不透明/透明交界生成并合并共线段，保留孔洞与分离部分；太阳接近0°/180°时也有连续侧面，避免切片退化产生的断条。仍输出原有深度和实体ID，地面与其它对象共用原接收Shader，不以整块矩形或地面贴片替代对象受影。
+
+`OpaqueRegionCache.getVolume(region)`延迟返回纯CPU的`ShadowVolumeGeometry`；`vertices()`是只读约定的Position3+UV2三角形列表，坐标归一化，第三维为纵深比例，透明帧顶点数为0。每张纹理只读取一次alpha位掩码，各图集区域及其UV翻转分别缓存边界与轮廓。Render翻转在顶点变换中同步作用于几何，动画、缩放和太阳变化不重新扫描像素。
+
+`TopDownShadowSystem`按轮廓缓存静态Mesh并拥有其生命周期，退出世界时统一释放；不释放AssetManager共享纹理。无法读取Pixmap的压缩/特殊纹理仅记录一次诊断并回退原切片投影，此类纹理仍可能有旧的横向退化，不能用整框实心阴影冒充轮廓。普通切图复用缓存；纹理内容原位重载时需重建阴影系统（其CPU缓存与GPU Mesh必须同时失效）。实际边缘精度仍受阴影缓冲分辨率影响。

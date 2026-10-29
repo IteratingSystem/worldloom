@@ -1,9 +1,11 @@
+// Worldloom：桌面GLSL精灵轮廓体投影，每顶点一次仿射变换，无纹理读取。
 attribute vec3 a_position;
 attribute vec2 a_texCoord;
 uniform vec2 u_drawPosition;
 uniform vec2 u_origin;
 uniform vec2 u_size;
 uniform vec2 u_scale;
+uniform vec2 u_spriteFlip;
 uniform float u_rotation;
 uniform float u_footY;
 uniform float u_shadowDepth;
@@ -19,7 +21,8 @@ varying vec2 v_texCoords;
 varying float v_lightDepth;
 
 void main() {
-    vec2 local = a_position.xy * u_size;
+    // 轮廓与纹理一起翻转，保持侧面和精灵的可见像素对齐。
+    vec2 local = mix(a_position.xy, vec2(1.0) - a_position.xy, u_spriteFlip) * u_size;
     vec2 relative = (local - u_origin) * u_scale;
     float angle = radians(u_rotation);
     float cosine = cos(angle);
@@ -28,7 +31,9 @@ void main() {
         relative.x * cosine - relative.y * sine,
         relative.x * sine + relative.y * cosine);
     vec2 spriteWorld = u_drawPosition + u_origin + rotated;
-    float height = max(0.0, spriteWorld.y - u_footY);
+    // 保持仿射变换，避免脚点穿过精灵时前后面与轮廓侧面产生裂缝。
+    // 地下部分在地面接收点之后，由原有深度比较自然排除。
+    float height = spriteWorld.y - u_footY;
     vec3 volumePoint = vec3(
         spriteWorld.x,
         u_footY + mix(-u_shadowDepth * 0.5,
