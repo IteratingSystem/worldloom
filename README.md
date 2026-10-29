@@ -1003,6 +1003,7 @@ WorldloomEngine engine = Worldloom.engineBuilder()
 - 引用属性还保存可选的 `entityReferenceTag`，用于恢复指向 Portal 携带实体的引用。旧存档没有该 Tag 时仅能恢复同一批次内的引用；跨地图遗留引用需由游戏按业务身份迁移。自定义整数实体引用也可使用此注解，其他整数属性不受影响。
 - `EntitySerializer.buildEntity` / `buildEntities` 不再覆盖输入快照的 `entityId`。单个模板实例化保留调用方提供的运行时引用；完整快照的引用重映射应使用 `buildEntities`。
 - `EntitySerializer.copyEntityDatum(template)` 返回独立镜像，修改坐标或实例属性前先复制；`copyComponentMirror(component)` 用于复制单个组件。复制保留地图来源和实体引用标签，隔离库存格子、嵌套Array及颜色等可变数据；常用类型直接复制，其余DTO沿用JSON序列化契约，不支持运行资源或循环引用。
+- `GameSnapshotManager.getTemplate(mapName, name)`及`getTemplate(mapName, component, property, intValue)`只查询`MapRole.TEMPLATE`图，按名称或组件整数字段建立会话索引，重复键保留首个模板、未找到返回null。返回值只读，实例化前仍需复制。切换快照、替换模板列表或改变列表长度自动失效；工具原位改名称/索引字段后调用`invalidateTemplates(mapName)`，不将运行实体作为模板缓存。
 - 世界快照捕获及实体恢复同样隔离可变数据：捕获后的镜像不随当前库存继续变化，多次生成也不会共享模板的集合。模板读取接口返回的数据仍应视为只读，不能先修改模板再调用buildEntity。
 - 状态机恢复只设置当前状态，不自动调用 `enter`。需要恢复的 UI、相机、输入或物理激活状态应由游戏在所有实体构建完成后协调，避免对尚未初始化的其他组件产生依赖。
 

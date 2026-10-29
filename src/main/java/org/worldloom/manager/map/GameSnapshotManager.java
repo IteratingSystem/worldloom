@@ -3,6 +3,7 @@ package org.worldloom.manager.map;
 import com.artemis.BaseSystem;
 import com.artemis.World;
 import com.badlogic.gdx.utils.ObjectMap;
+import com.badlogic.gdx.utils.IntMap;
 import org.worldloom.manager.JsonManager;
 import org.worldloom.Worldloom;
 import org.worldloom.serialize.EntitySerializer;
@@ -24,6 +25,7 @@ public class GameSnapshotManager {
     private static final String CURRENT_PACKAGE = "org.worldloom.";
     private static GameSnapshotManager instance;
     private GameSnapshot gameSnapshot;
+    private final ObjectMap<String, TemplateIndex> templateIndexes = new ObjectMap<>();
 
     private GameSnapshotManager() {
     }
@@ -51,6 +53,7 @@ public class GameSnapshotManager {
         }
         migrateSnapshot(gameSnapshot);
         this.gameSnapshot = gameSnapshot;
+        templateIndexes.clear();
     }
 
     public GameSnapshot getWorldState() {
@@ -132,6 +135,68 @@ public class GameSnapshotManager {
             gameSnapshot.entityData.put(mapName, entityData);
         }
         return entityData;
+    }
+
+    /** 按名称查询当前会话模板，重复名称沿用列表中第一个；返回共享只读镜像，修改前必须复制。 */
+    public EntityDatum getTemplate(String mapName, String name) {
+        return name == null ? null : templateIndex(mapName).names.get(name);
+    }
+
+    /** 按组件的整数字段查询只读模板；首次建立索引，后续不再逐个扫描组件属性。 */
+    public EntityDatum getTemplate(String mapName, String component, String property, int value) {
+        TemplateIndex index = templateIndex(mapName);
+        TemplateField field = new TemplateField(component, property);
+        IntMap<EntityDatum> values = index.fields.get(field);
+        if (values == null) {
+            values = new IntMap<>();
+            for (EntityDatum datum : index.source) {
+                if (datum.compMirrors == null) continue;
+                for (CompMirror mirror : datum.compMirrors) {
+                    if (!component.equals(mirror.simpleName)) continue;
+                    Object raw = mirror.getValue(property);
+                    if (raw instanceof Number number && !values.containsKey(number.intValue()))
+                        values.put(number.intValue(), datum);
+                    break;
+                }
+            }
+            index.fields.put(field, values);
+        }
+        return values.get(value);
+    }
+
+    /** 编辑器若原位修改模板名称或索引属性，修改后显式失效；替换会话或模板列表会自动失效。 */
+    public void invalidateTemplates(String mapName) { templateIndexes.remove(mapName); }
+
+    /** 仅索引TEMPLATE地图，避免误将不断更新的世界实体当作静态模板缓存。 */
+    private TemplateIndex templateIndex(String mapName) {
+        if (Worldloom.config().getMapRole(mapName) != org.worldloom.map.MapRole.TEMPLATE)
+            throw new IllegalArgumentException("模板查询需要TEMPLATE地图：" + mapName);
+        EntityData data = getEntityData(mapName);
+        TemplateIndex index = templateIndexes.get(mapName);
+        if (index == null || index.source != data || index.size != data.size) {
+            index = new TemplateIndex(data);
+            templateIndexes.put(mapName, index);
+        }
+        return index;
+    }
+
+    /** 索引键只描述镜像元数据，不参与存档。 */
+    private record TemplateField(String component, String property) { }
+
+    /** 缓存归属当前会话及模板列表，绝不跨快照持有旧镜像。 */
+    private static final class TemplateIndex {
+        final EntityData source;
+        final int size;
+        final ObjectMap<String, EntityDatum> names = new ObjectMap<>();
+        final java.util.Map<TemplateField, IntMap<EntityDatum>> fields = new java.util.HashMap<>();
+
+        /** 保持列表中的首个同名模板，与原逐项查找语义一致。 */
+        TemplateIndex(EntityData source) {
+            this.source = source;
+            size = source.size;
+            for (EntityDatum datum : source)
+                if (datum.name != null && !names.containsKey(datum.name)) names.put(datum.name, datum);
+        }
     }
 
     public String getSaveJson() {
