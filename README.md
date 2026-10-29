@@ -1570,6 +1570,6 @@ boolean touchesForbidden = areas.overlaps("AREA_NO_BUILD", objectBounds);
 
 MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.system。all/layer/named返回不可变集合；MapArea保留mapId、layerName、objectId、name，bounds()返回位置/尺寸副本。未登记图层和未登记区域的运行地图返回空查询；不回退其它地图，不因AREA前缀擅自读取。运行图限制遵循地图用途和常驻目录。
 
-所有几何入口均使用与Pos一致的Y向上源像素；世界相机/物理坐标须先除以worldScale。复用TmxMapLoader已完成的Y翻转，补齐对象顺时针旋转及父组/本层偏移，不二次翻转。矩形/椭圆/胶囊按Tiled左上角为旋转轴；胶囊半径为短边的一半，长边决定中心线方向，等宽高时为圆。EcsMapLoader保留CapsuleMapObject身份并同步对象编号引用，避免LibGDX 1.14.2将其当矩形；此支持用于区域查询，不新增胶囊Box2D夹具。支持旋转椭圆/胶囊精确查询和凹多边形完整包含，不能用AABB或仅四角判断替代。点在边界算包含，矩形完整包含允许贴边，相交查询将触边算相交；非有限或零面积查询返回false。
+所有几何入口均使用与Pos一致的Y向上源像素；世界相机/物理坐标须先除以worldScale。复用TmxMapLoader已完成的Y翻转，补齐对象顺时针旋转及父组/本层偏移，不二次翻转。矩形/椭圆/胶囊按Tiled左上角为旋转轴；胶囊半径为短边的一半，长边决定中心线方向，等宽高时为圆。EcsMapLoader保留CapsuleMapObject身份并同步对象编号引用，避免LibGDX 1.14.2将其当矩形；4.11.1起同时保留延迟解析的对象属性引用。此支持用于区域查询，不新增胶囊Box2D夹具。支持旋转椭圆/胶囊精确查询和凹多边形完整包含，不能用AABB或仅四角判断替代。点在边界算包含，矩形完整包含允许贴边，相交查询将触边算相交；非有限或零面积查询返回false。
 
 同层多个区域分别判断，完整矩形必须落在同一个区域内，不自动将相邻区域拼为许可范围。建议公共地图默认禁止建造，游戏PlacementSystem先查询允许区，再查禁建区和地面/碰撞/距离等条件；不要让引擎硬编码BUILD之类的业务含义。
