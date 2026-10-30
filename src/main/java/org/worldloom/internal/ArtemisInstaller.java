@@ -127,7 +127,7 @@ public final class ArtemisInstaller {
             config.getNavigationRoadCost(),
             config.getNavigationOffRoadCost()));
         builder.with(cameraSystem);
-        builder.with(new AudioSystem(audioConfig));
+        builder.with(new AudioSystem(audioConfig, config.getWorldScale()));
         builder.with(new KeyframeShapeSystem());
         builder.with(new TileAnimSystem());
         builder.with(new SliceSystem());

@@ -61,6 +61,11 @@ public class GameSnapshotManager {
         return gameSnapshot;
     }
 
+    /** 查询是否已建立会话，不创建快照；供菜单与隔离试验页保存和恢复会话。 */
+    public boolean hasSnapshot() {
+        return gameSnapshot != null;
+    }
+
     public String getCurrentMap() {
         return getWorldState().curtMap;
     }

@@ -36,6 +36,8 @@ public class AudioSystem extends BaseSystem {
     public M<Pos> mPos;
 
     private final AudioConfig config;
+    private final float worldScale;
+    private final List<Long> completedInstances = new ArrayList<>();
     private final EnumMap<AudioBus, Float> busVolumes =
         new EnumMap<>(AudioBus.class);
     private final EnumSet<AudioBus> pausedBuses =
@@ -53,14 +55,22 @@ public class AudioSystem extends BaseSystem {
     private float listenerX;
     private float listenerY;
 
+    /** 使用默认声音配置与源像素坐标比例。 */
     public AudioSystem() {
         this(new AudioConfig());
     }
 
-    public AudioSystem(AudioConfig config) {
+    /** 兼容独立安装声音系统的调用方，默认世界比例为1。 */
+    public AudioSystem(AudioConfig config) { this(config, 1f); }
+
+    /** 显式接收像素到世界比例，相机监听坐标转换回与Pos一致的源像素。 */
+    public AudioSystem(AudioConfig config, float worldScale) {
         if (config == null) {
             throw new IllegalArgumentException("config cannot be null");
         }
+        if (!Float.isFinite(worldScale) || worldScale <= 0f)
+            throw new IllegalArgumentException("声音世界比例必须为有限正数");
+        this.worldScale = worldScale;
         this.config = config;
         masterVolume = config.getMasterVolume();
         for (AudioBus bus : AudioBus.values()) {
@@ -77,7 +87,8 @@ public class AudioSystem extends BaseSystem {
         }
         updateListener();
         float delta = world.getDelta();
-        List<Long> toRemove = new ArrayList<>();
+        List<Long> toRemove = completedInstances;
+        toRemove.clear();
         for (AudioInstance instance : instances.values()) {
             if (instance.sourceEntityId >= 0) {
                 if (!updateSourceFromEntity(instance)) {
@@ -512,8 +523,8 @@ public class AudioSystem extends BaseSystem {
             return;
         }
         if (!fixedListener && cameraSystem != null && cameraSystem.camera != null) {
-            listenerX = cameraSystem.camera.position.x;
-            listenerY = cameraSystem.camera.position.y;
+            listenerX = cameraSystem.camera.position.x / worldScale;
+            listenerY = cameraSystem.camera.position.y / worldScale;
         }
     }
 

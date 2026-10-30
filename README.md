@@ -377,6 +377,8 @@ boolean ending = animations.isLast(1);
 boolean finished = animations.isAnimationFinished();
 ```
 
+`TileAnimation.initialize`可重复初始化，不累加旧时长。倒播按倒序各帧自身时长循环；`LOOP_PINGPONG`不重复端点（3帧为1232123）；`LOOP_RANDOM`每个平均帧时长只抽样一次，同一时间重复查询保持同帧，修改帧时长同步重算步长。
+
 #### 多角色共用 tileset（`group`）
 
 多个角色合在一个 tileset 里时，给每个角色全部动画瓦片的 `TileAnimation` 填同一个 `group`（如 `slime_green`）。实体按放置瓦片所属分组收集动画表和帧碰撞形状（`FixDef`），不同分组的同名动画（`idle`、`run`）互不干扰；放置的瓦片可以是该角色任意一帧（不必是带 `TileAnimation` 的首帧，按帧引用反查分组）。`group` 留空表示不分组，行为与旧版本一致：整个 tileset 的动画都归该实体，同名动画取第一个。
@@ -1277,6 +1279,8 @@ events.dispatch(AudioEvent.listenerAt(x, y));
 events.dispatch(AudioEvent.useCameraListener());
 ```
 
+`AudioEvent.at/listenerAt`、实体`Pos`和声音距离参数统一使用源像素单位；相机监听自动将世界相机坐标除以`worldScale`。正常Builder会自动传入比例；手动安装时使用`new AudioSystem(config, worldScale)`，旧构造器默认比例1。
+
 空间声音按声源与监听者的距离计算音量衰减，并按水平相对位置计算 `pan`。这属于俯视角 2D 立体声，不是带耳廓、遮挡和混响模拟的 HRTF。瞬时音效在触发时取得位置；使用 `.follow(entityId)` 的声音会持续更新，实体被删除后循环声音会自动停止。
 
 `minDistance` 内保持完整音量，`maxDistance` 外静音，二者之间按 `rolloff` 衰减。`panningStrength` 为 `0` 时关闭左右声像，默认值 `1`。
@@ -1580,7 +1584,7 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 ## 26. 绘制基础资源与阴影内部职责（4.12.0）
 
 - `RenderResources.createScreenQuad()`创建位置2维+UV2维的全屏四边形，按`GL_TRIANGLE_FAN`绘制；`createSoftMask(size, solidRadius)`创建白色径向软遮罩，半径占比范围`[0,1)`。每次返回独立GL资源，创建方在GL线程使用并释放；工厂不缓存资源，不接管AssetManager纹理。
-- `TopDownShadowSystem`保留ECS筛选、绘制顺序、阈值与合成；透明度扫描交给`OpaqueRegionCache`，太阳投影与凸包交给`SunShadowGeometry`。缓存保留区域范围（4.13.0起也缓存透明度与轮廓），`clear()`不释放共享纹理；投影数组由实例复用，只读且在下次计算前消费。
+- `TopDownShadowSystem`保留ECS筛选、绘制顺序、阈值与合成；透明度扫描交给`OpaqueRegionCache`，连续太阳轮廓体交给`ShadowVolumeGeometry`。旧`SunShadowGeometry`保留公开API，但正式管线不再创建旧太阳阴影带Shader或Mesh。缓存保留区域范围（4.13.0起也缓存透明度与轮廓），`clear()`不释放共享纹理；投影数组由实例复用，只读且在下次计算前消费。
 - 阴影固定资源按创建顺序登记、逆序释放；可重建FBO单独登记，初始化中断也能回收已成功创建的部分，重复释放不再销毁同一资源。纹理内容原位重载时需清空透明度缓存，普通切图复用缓存。
 
 
@@ -1591,3 +1595,9 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 `OpaqueRegionCache.getVolume(region)`延迟返回纯CPU的`ShadowVolumeGeometry`；`vertices()`是只读约定的Position3+UV2三角形列表，坐标归一化，第三维为纵深比例，透明帧顶点数为0。每张纹理只读取一次alpha位掩码，各图集区域及其UV翻转分别缓存边界与轮廓。Render翻转在顶点变换中同步作用于几何，动画、缩放和太阳变化不重新扫描像素。
 
 `TopDownShadowSystem`按轮廓缓存静态Mesh并拥有其生命周期，退出世界时统一释放；不释放AssetManager共享纹理。无法读取Pixmap的压缩/特殊纹理仅记录一次诊断并回退原切片投影，此类纹理仍可能有旧的横向退化，不能用整框实心阴影冒充轮廓。普通切图复用缓存；纹理内容原位重载时需重建阴影系统（其CPU缓存与GPU Mesh必须同时失效）。实际边缘精度仍受阴影缓冲分辨率影响。
+
+### 26.2 阴影排序与会话查询（4.13.1）
+
+观察图中的可绘制投影者按脚点稳定排序，同脚点保留订阅顺序；每帧脚点只取一次，复用排序槽位，将插入排序改为O(n log n)。仍保留本图屏外投影者，允许其阴影进入相机范围。点光继续沿用原投影路径。
+
+菜单可通过`GameSnapshotManager.hasSnapshot()`判断当前是否已建立会话，不触发初始化或修改。隔离试验页临时更换快照时必须在世界释放后恢复原快照；原本没有会话时使用已有`setNull()`清空临时管理器，不保存试验实体。

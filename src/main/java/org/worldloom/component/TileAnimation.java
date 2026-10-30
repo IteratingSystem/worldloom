@@ -50,6 +50,7 @@ public class TileAnimation extends SerializeComponent {
     private int lastFrameNumber;
     //上一帧的时间戳
     private float lastStateTime;
+    private long randomStep = -1;
 
 
     @Override
@@ -65,8 +66,7 @@ public class TileAnimation extends SerializeComponent {
     }
 
     /**
-     * 用于在非组件的模式下初始化
-     * 传入一个AnimatedTiledMapTile以及playModeName
+     * 从Tiled帧与各帧时长重新初始化；重复调用会重置播放时间和随机采样，不累加旧时长。
      *
      * @param animatedTile
      * @param playMode
@@ -79,10 +79,9 @@ public class TileAnimation extends SerializeComponent {
             frameDurations[i] = animationIntervals[i]/1000f;
         }
 
-        for (float duration : frameDurations) {
-            totalDuration += duration;
-        }
-        randomDuration = totalDuration/frameDurations.length;
+        updateAnimationDuration();
+        lastFrameNumber = 0;
+        lastStateTime = 0;
 
         StaticTiledMapTile[] frameTiles = animatedTile.getFrameTiles();
         keyframes = new TextureRegion[frameTiles.length];
@@ -181,84 +180,51 @@ public class TileAnimation extends SerializeComponent {
      * @return
      */
     public int getKeyframeIndex(float stateTime) {
-        if (this.keyframes == null || this.keyframes.length == 1) {
-            return 0;
-        }
-
-        int frameNumber = 0;
-        //动画循环n遍,最终的余数
-        float remainder = stateTime % totalDuration;
-        //往返动画循环n遍,最终的余数
-        float pingRemainder = stateTime % (2*totalDuration);
-        float adder;
-
-        switch (this.playMode) {
-            //播放一次后停止
-            case NORMAL:
-                if (stateTime >= totalDuration){
-                    frameNumber = keyframes.length - 1;
-                    break;
+        if (keyframes == null || keyframes.length <= 1) return 0;
+        float time = Math.max(0f, stateTime);
+        int frameNumber = switch (playMode) {
+            case NORMAL -> time >= totalDuration ? keyframes.length - 1 : findIndex(time, frameDurations);
+            case LOOP -> findIndex(time % totalDuration, frameDurations);
+            case REVERSED -> time >= totalDuration ? 0 : reverseIndex(time);
+            case LOOP_REVERSED -> reverseIndex(time % totalDuration);
+            case LOOP_PINGPONG -> pingPongIndex(time);
+            case LOOP_RANDOM -> {
+                long step = (long) Math.floor(time / randomDuration);
+                if (step != randomStep || time < lastStateTime) {
+                    lastFrameNumber = MathUtils.random(keyframes.length - 1);
+                    randomStep = step;
                 }
-                frameNumber = findIndex(stateTime, frameDurations);
-                break;
-
-            //循环播放
-            case LOOP:
-                frameNumber = findIndex(remainder, frameDurations);
-                break;
-            //往返播放
-            case LOOP_PINGPONG:
-                if (pingRemainder < totalDuration) {
-                    // 正向播放
-                    frameNumber = findIndex(pingRemainder, frameDurations);
-                    break;
-                } else {
-                    // 反向播放
-                    pingRemainder -= totalDuration;
-                    frameNumber =  frameDurations.length - 1 - findIndex(pingRemainder, frameDurations);
-                    break;
-                }
-            //循环播放,随机上一张或者下一张
-            case LOOP_RANDOM:
-                int lastFrameNumber = (int)(this.lastStateTime / this.randomDuration);
-                if (lastFrameNumber != frameNumber) {
-                    frameNumber = MathUtils.random(this.keyframes.length - 1);
-                    break;
-                } else {
-                    frameNumber = this.lastFrameNumber;
-                    break;
-                }
-            //反向播放一次后停止
-            case REVERSED:
-                if (stateTime < totalDuration){
-                    adder = 0;
-                    for (int i = frameDurations.length-1; i >= 0; i--) {
-                        adder += frameDurations[i];
-                        if (stateTime <= adder){
-                            frameNumber = i;
-                            break;
-                        }
-                    }
-                }
-                break;
-            //反向循环播放
-            case LOOP_REVERSED:
-                if (stateTime < totalDuration){
-                    adder = 0;
-                    for (int i = frameDurations.length-1; i >= 0; i--) {
-                        adder += frameDurations[i];
-                        if (remainder <= adder){
-                            frameNumber = i;
-                            break;
-                        }
-                    }
-                }
-        }
-
-        this.lastFrameNumber = frameNumber;
-        this.lastStateTime = stateTime;
+                yield lastFrameNumber;
+            }
+        };
+        lastFrameNumber = frameNumber;
+        lastStateTime = time;
         return frameNumber;
     }
+
+    /** 从末帧向前累计各自时长，不要求所有帧等时长。 */
+    private int reverseIndex(float time) {
+        float elapsed = 0f;
+        for (int i = frameDurations.length - 1; i >= 0; i--) {
+            elapsed += frameDurations[i];
+            if (time < elapsed) return i;
+        }
+        return 0;
+    }
+
+    /** 往返循环不重复首尾帧；三帧等时动画按1232123播放。 */
+    private int pingPongIndex(float time) {
+        float cycle = totalDuration * 2f - frameDurations[0] - frameDurations[frameDurations.length - 1];
+        float phase = time % cycle;
+        if (phase < totalDuration) return findIndex(phase, frameDurations);
+        phase -= totalDuration;
+        for (int i = frameDurations.length - 2; i > 0; i--) {
+            if (phase < frameDurations[i]) return i;
+            phase -= frameDurations[i];
+        }
+        return 0;
+    }
+
 
 
     public TextureRegion[] getkeyframes() {
@@ -305,8 +271,10 @@ public class TileAnimation extends SerializeComponent {
     }
 
 
+    /** 切换播放方式，并使上一次随机帧采样失效。 */
     public void setPlayMode(Animation.PlayMode playMode) {
         this.playMode = playMode;
+        randomStep = -1;
     }
 
 
@@ -331,7 +299,7 @@ public class TileAnimation extends SerializeComponent {
         for (int i = 0; i < frameDurations.length; i++) {
             frameDurations[i] = frameDuration;
         }
-        totalDuration = frameDurations.length * frameDuration;
+        updateAnimationDuration();
     }
 
     /**
@@ -372,22 +340,26 @@ public class TileAnimation extends SerializeComponent {
         return this.totalDuration;
     }
 
+    /** 重新计算总时长与随机步长，并清除旧随机帧采样基线。 */
     private void updateAnimationDuration(){
         totalDuration = 0;
         for (float duration : frameDurations) {
+            if (!Float.isFinite(duration) || duration <= 0f)
+                throw new IllegalArgumentException("动画帧时长必须为有限正数");
             totalDuration += duration;
         }
+        randomDuration = frameDurations.length == 0 ? 0f : totalDuration / frameDurations.length;
+        randomStep = -1;
     }
+    /** 按各帧时长定位，累计舍入触及末端时停留末帧，不意外跳回首帧。 */
     private int findIndex(float remainingTime, float[] frameDurations) {
-        int index = 0;
         float cumulativeTime = 0.0f;
         for (int i = 0; i < frameDurations.length; i++) {
             cumulativeTime += frameDurations[i];
             if (remainingTime < cumulativeTime) {
-                index = i;
-                break;
+                return i;
             }
         }
-        return index;
+        return frameDurations.length - 1;
     }
 }

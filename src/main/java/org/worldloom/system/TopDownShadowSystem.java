@@ -34,7 +34,6 @@ import org.worldloom.light.TopDownShadowConfig;
 import org.worldloom.light.TopDownShadowLight;
 import org.worldloom.light.TopDownSunLight;
 import org.worldloom.light.OpaqueRegionCache;
-import org.worldloom.light.SunShadowGeometry;
 import org.worldloom.light.ShadowVolumeGeometry;
 import org.worldloom.manager.ShaderManager;
 import org.worldloom.render.MapVisibility;
@@ -48,9 +47,6 @@ public class TopDownShadowSystem extends BaseSystem {
     private static final String TAG = TopDownShadowSystem.class.getSimpleName();
     private static final int SHADOW_SEGMENTS = 32;
     private static final int MAX_VOLUME_LAYERS = 16;
-    private static final int SUN_RIBBON_MAX_VERTICES = 8;
-    private static final float SUN_RIBBON_CHECK_TEXELS = 6f;
-    private static final float SUN_RIBBON_SWITCH_TEXELS = 2.5f;
     private static final int GL_MAX_BLEND_EQUATION = 0x8008;
     private static final String SHADER_PATH = "shader/topdown/";
 
@@ -58,6 +54,8 @@ public class TopDownShadowSystem extends BaseSystem {
     private final TopDownShadowConfig config;
     private final SunLightConfig sunConfig;
     private final IntArray sortedShadowEntities = new IntArray();
+    private final com.badlogic.gdx.utils.Array<ShadowOrder> shadowOrder = new com.badlogic.gdx.utils.Array<>();
+    private final com.badlogic.gdx.utils.Array<ShadowOrder> shadowOrderSlots = new com.badlogic.gdx.utils.Array<>();
     private final Vector2 lightDirection = new Vector2();
     private final Vector2 lightPosition = new Vector2();
     private final Vector3 lightAxisU = new Vector3();
@@ -67,7 +65,6 @@ public class TopDownShadowSystem extends BaseSystem {
     private final int[] previousTextureBindings = new int[4];
     private final OpaqueRegionCache opaqueRegions = new OpaqueRegionCache();
     private final ObjectMap<ShadowVolumeGeometry, Mesh> volumeMeshes = new ObjectMap<>();
-    private final SunShadowGeometry sunGeometry;
     private final com.badlogic.gdx.utils.Array<com.badlogic.gdx.utils.Disposable> renderResources = new com.badlogic.gdx.utils.Array<>();
     private final com.badlogic.gdx.utils.Array<FrameBuffer> frameBuffers = new com.badlogic.gdx.utils.Array<>();
 
@@ -88,10 +85,8 @@ public class TopDownShadowSystem extends BaseSystem {
     private TopDownSunLight sunLight;
     private SpriteBatch spriteBatch;
     private Mesh screenQuad;
-    private Mesh sunProjectedShadowMesh;
     private Mesh projectedShadowMesh;
     private final Mesh[] volumeSliceMeshes = new Mesh[MAX_VOLUME_LAYERS + 1];
-    private Mesh sunShadowRibbonMesh;
     private FrameBuffer heightMapSource;
     private FrameBuffer heightMap;
     private FrameBuffer depthDownsampleBuffer;
@@ -103,7 +98,6 @@ public class TopDownShadowSystem extends BaseSystem {
     private ShaderProgram heightMapShader;
     private ShaderProgram entityMaskShader;
     private ShaderProgram projectedShadowShader;
-    private ShaderProgram sunShadowRibbonShader;
     private ShaderProgram receiverShader;
     private ShaderProgram lightSpaceCasterShader;
     private ShaderProgram lightSpaceGroundShader;
@@ -143,7 +137,6 @@ public class TopDownShadowSystem extends BaseSystem {
             throw new IllegalArgumentException("sunConfig cannot be null");
         }
         this.worldScale = worldScale;
-        sunGeometry = new SunShadowGeometry(worldScale);
         this.config = config;
         this.sunConfig = sunConfig;
     }
@@ -171,9 +164,7 @@ public class TopDownShadowSystem extends BaseSystem {
 
             spriteBatch = own(new SpriteBatch());
             screenQuad = own(org.worldloom.render.RenderResources.createScreenQuad());
-            sunProjectedShadowMesh = own(createProjectedShadowMesh(1));
             projectedShadowMesh = own(createProjectedShadowMesh(SHADOW_SEGMENTS));
-            sunShadowRibbonMesh = own(createSunShadowRibbonMesh());
             ShaderProgram.pedantic = false;
             ShaderManager shaderManager = ShaderManager.getInstance();
             heightMapShader = compileShader(
@@ -188,10 +179,6 @@ public class TopDownShadowSystem extends BaseSystem {
                 shaderManager.getVertexContext(SHADER_PATH + "projected_shadow"),
                 shaderManager.getFragmentContext(SHADER_PATH + "projected_shadow"),
                 "Projected shadow");
-            sunShadowRibbonShader = compileShader(
-                shaderManager.getVertexContext(SHADER_PATH + "shadow_ribbon"),
-                shaderManager.getFragmentContext(SHADER_PATH + "shadow_ribbon"),
-                "Sun shadow ribbon");
             receiverShader = compileShader(
                 shaderManager.getVertexContext(SHADER_PATH + "receiver"),
                 shaderManager.getFragmentContext(SHADER_PATH + "receiver"),
@@ -446,21 +433,32 @@ public class TopDownShadowSystem extends BaseSystem {
         int[] ids = entities.getData();
         for (int i = 0; i < entities.size(); i++) {
             int entityId = ids[i];
-            if (MapVisibility.inViewedMap(world, entityId)) {
+            if (MapVisibility.inViewedMap(world, entityId) && isRenderable(mRender.get(entityId))) {
                 sortedShadowEntities.add(entityId);
             }
         }
-        for (int i = 1; i < sortedShadowEntities.size; i++) {
-            int entityId = sortedShadowEntities.get(i);
-            float footY = getFootY(entityId);
-            int insertAt = i;
-            while (insertAt > 0
-                && getFootY(sortedShadowEntities.get(insertAt - 1)) < footY) {
-                sortedShadowEntities.set(
-                    insertAt, sortedShadowEntities.get(insertAt - 1));
-                insertAt--;
-            }
-            sortedShadowEntities.set(insertAt, entityId);
+        shadowOrder.clear();
+        for (int i = 0; i < sortedShadowEntities.size; i++) {
+            if (i == shadowOrderSlots.size) shadowOrderSlots.add(new ShadowOrder());
+            ShadowOrder entry = shadowOrderSlots.get(i);
+            entry.entityId = sortedShadowEntities.get(i);
+            entry.footY = getFootY(entry.entityId);
+            entry.ordinal = i;
+            shadowOrder.add(entry);
+        }
+        shadowOrder.sort();
+        for (int i = 0; i < shadowOrder.size; i++)
+            sortedShadowEntities.set(i, shadowOrder.get(i).entityId);
+    }
+
+    /** 复用排序槽位，脚点每帧只计算一次，同脚点沿用原订阅顺序。 */
+    private static final class ShadowOrder implements Comparable<ShadowOrder> {
+        int entityId, ordinal;
+        float footY;
+        /** 按脚点降序排列，高度相同则稳定保留输入顺序。 */
+        @Override public int compareTo(ShadowOrder other) {
+            int comparison = other.footY == footY ? 0 : Float.compare(other.footY, footY);
+            return comparison == 0 ? Integer.compare(ordinal, other.ordinal) : comparison;
         }
     }
 
@@ -739,7 +737,7 @@ public class TopDownShadowSystem extends BaseSystem {
             if (!isCasterInRange(entityId, light)) {
                 continue;
             }
-            renderProjectedEntity(entityId, light.isDirectional());
+            renderProjectedEntity(entityId);
         }
     }
 
@@ -796,7 +794,7 @@ public class TopDownShadowSystem extends BaseSystem {
         }
     }
 
-    private void renderProjectedEntity(int entityId, boolean directional) {
+    private void renderProjectedEntity(int entityId) {
         Render render = mRender.get(entityId);
         Pos pos = mPos.get(entityId);
         if (!isRenderable(render)) {
@@ -808,24 +806,18 @@ public class TopDownShadowSystem extends BaseSystem {
                 TextureRegion region = render.textureSheets.get(i);
                 if (region != null) {
                     renderProjectedRegion(entityId, render, pos, region,
-                        soarHeight + i * render.sheetOffset, getFootY(entityId),
-                        directional);
+                        soarHeight + i * render.sheetOffset, getFootY(entityId));
                 }
             }
             return;
         }
         renderProjectedRegion(
-            entityId, render, pos, render.keyframe, soarHeight, getFootY(entityId),
-            directional);
+            entityId, render, pos, render.keyframe, soarHeight, getFootY(entityId));
     }
 
     private void renderProjectedRegion(int entityId, Render render, Pos pos,
                                        TextureRegion region, float extraY,
-                                       float footY, boolean directional) {
-        if (directional && renderSunShadowRibbonIfNeeded(
-            entityId, render, pos, region, extraY, footY)) {
-            return;
-        }
+                                       float footY) {
         projectedShadowShader.bind();
         Texture texture = region.getTexture();
         float drawX = worldScale * (pos.x + render.offsetX);
@@ -844,60 +836,8 @@ public class TopDownShadowSystem extends BaseSystem {
             "u_shadowDepth", getShadowDepth(entityId, region));
         setTextureCoordinates(projectedShadowShader, render, region);
         texture.bind(0);
-        Mesh mesh = directional ? sunProjectedShadowMesh : projectedShadowMesh;
-        mesh.render(
+        projectedShadowMesh.render(
             projectedShadowShader, GL20.GL_TRIANGLE_STRIP);
-    }
-
-    /**
-     * 太阳接近平行于地面时，普通纹理投影会退化为低于一个像素的线。
-     * 此时用真实不透明边界生成连续凸阴影带，避免光栅化后的分段与消失。
-     */
-    private boolean renderSunShadowRibbonIfNeeded(
-        int entityId, Render render, Pos pos, TextureRegion region,
-        float extraY, float footY) {
-        float fullSpan = getProjectedVerticalSpanTexels(
-            render, pos, region, extraY, footY,
-            0f, region.getRegionWidth(), 0f, region.getRegionHeight());
-        if (fullSpan >= SUN_RIBBON_CHECK_TEXELS) {
-            return false;
-        }
-
-        OpaqueRegionCache.Bounds opaqueBounds = opaqueRegions.get(region);
-        float opaqueSpan = getProjectedVerticalSpanTexels(
-            render, pos, region, extraY, footY,
-            opaqueBounds.left(), opaqueBounds.right(),
-            opaqueBounds.bottom(), opaqueBounds.top());
-        if (opaqueSpan >= SUN_RIBBON_SWITCH_TEXELS) {
-            return false;
-        }
-
-        int hullSize = sunGeometry.buildRibbon(
-            render, pos, region, extraY, footY,
-            opaqueBounds.left(), opaqueBounds.right(),
-            opaqueBounds.bottom(), opaqueBounds.top(),
-            getShadowDepth(entityId, region), sunLight.getShadowDirection(lightDirection),
-            sunLight.getShadowLengthScale());
-        if (hullSize < 3) {
-            return false;
-        }
-        sunShadowRibbonMesh.setVertices(sunGeometry.vertices(), 0, hullSize * 2);
-        sunShadowRibbonShader.bind();
-        sunShadowRibbonShader.setUniformMatrix(
-            "u_projTrans", cameraSystem.camera.combined);
-        sunShadowRibbonMesh.render(
-            sunShadowRibbonShader, GL20.GL_TRIANGLE_FAN, 0, hullSize);
-        return true;
-    }
-
-    /** 纹素阈值属于渲染缓冲策略，几何计算只返回世界跨度。 */
-    private float getProjectedVerticalSpanTexels(
-        Render render, Pos pos, TextureRegion region, float extraY,
-        float footY, float left, float right, float bottom, float top) {
-        float span = sunGeometry.verticalSpan(render, pos, region, extraY, footY,
-            left, right, bottom, top, sunLight.getShadowDirection(lightDirection), sunLight.getShadowLengthScale());
-        float visibleWorldHeight = cameraSystem.camera.viewportHeight * cameraSystem.camera.zoom;
-        return span / Math.max(visibleWorldHeight / groundShadowSource.getHeight(), 0.0001f);
     }
 
     private void setTextureCoordinates(ShaderProgram shader, Render render,
@@ -1236,11 +1176,6 @@ public class TopDownShadowSystem extends BaseSystem {
         return offset;
     }
 
-    private Mesh createSunShadowRibbonMesh() {
-        return new Mesh(false, SUN_RIBBON_MAX_VERTICES, 0,
-            new VertexAttribute(VertexAttributes.Usage.Position, 2, "a_position"));
-    }
-
     private ShaderProgram compileShader(String vertex, String fragment,
                                         String name) {
         if (vertex == null || fragment == null) {
@@ -1268,6 +1203,8 @@ public class TopDownShadowSystem extends BaseSystem {
     /** 退出与初始化异常共用释放入口，重复调用不再释放同一资源，不触碰共享纹理。 */
     @Override
     protected void dispose() {
+        shadowOrder.clear();
+        shadowOrderSlots.clear();
         volumeMeshes.clear();
         java.util.Arrays.fill(volumeSliceMeshes, null);
         opaqueRegions.clear();
