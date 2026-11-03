@@ -41,6 +41,7 @@ public class NavigationSystem extends IteratingSystem {
     private final float roadCost;
     private final float offRoadCost;
     private final ObjectMap<String, IntMap<NavigationProfile>> profilesByMap = new ObjectMap<>();
+    private final IntMap<NavigationProfile> pathProfiles = new IntMap<>();
     private final NavigationHeuristic heuristic;
     private M<NavigationAgent> mNavigationAgent;
     private M<Pos> mPos;
@@ -103,36 +104,42 @@ public class NavigationSystem extends IteratingSystem {
         agent.targetY = targetY;
         agent.stopDistance = Math.max(0f, stopDistance);
         agent.pathMapName = mapId;
+        planPath(entityId, agent);
+        return requestId;
+    }
+
+    /** 首次请求和拓扑变更复用同一规划过程；自动重规划保留请求编号与原目标。 */
+    private void planPath(int entityId, NavigationAgent agent) {
+        pathProfiles.remove(entityId);
         agent.path.clear();
         agent.nextWaypoint = 0;
-
         if (agent.speed <= 0f || agent.radius < 0f
             || agent.waypointTolerance < 0f) {
             fail(entityId, agent, "Navigation agent configuration is invalid");
-            return requestId;
+            return;
         }
 
         Pos pos = mPos.get(entityId);
         float arrivalDistance = Math.max(agent.waypointTolerance,
             agent.stopDistance);
-        if (Vector2.dst(pos.x, pos.y, targetX, targetY) <= arrivalDistance) {
+        if (Vector2.dst(pos.x, pos.y, agent.targetX, agent.targetY) <= arrivalDistance) {
             succeed(entityId, agent);
-            return requestId;
+            return;
         }
 
-        NavigationProfile profile = profileFor(mapId, agent.radius);
+        NavigationProfile profile = profileFor(agent.pathMapName, agent.radius);
         NavigationGrid grid = profile.grid;
         NavigationNode start = grid.getNodeAt(pos.x, pos.y);
-        NavigationNode end = grid.getNodeAt(targetX, targetY);
+        NavigationNode end = grid.getNodeAt(agent.targetX, agent.targetY);
         if (start == null || end == null) {
             fail(entityId, agent, "Navigation start or target is blocked or outside the map");
-            return requestId;
+            return;
         }
 
         DefaultGraphPath<NavigationNode> nodePath = new DefaultGraphPath<>();
         if (!profile.pathFinder.searchNodePath(start, end, heuristic, nodePath)) {
             fail(entityId, agent, "No navigation path was found");
-            return requestId;
+            return;
         }
 
         // 起点就是实体当前所在单元格，不需要再走向起点中心。
@@ -141,11 +148,11 @@ public class NavigationSystem extends IteratingSystem {
             agent.path.add(new Vector2(node.x, node.y));
         }
         if (agent.path.isEmpty()
-            || !agent.path.peek().epsilonEquals(targetX, targetY, 0.001f)) {
-            agent.path.add(new Vector2(targetX, targetY));
+            || !agent.path.peek().epsilonEquals(agent.targetX, agent.targetY, 0.001f)) {
+            agent.path.add(new Vector2(agent.targetX, agent.targetY));
         }
         agent.status = NavigationStatus.MOVING;
-        return requestId;
+        pathProfiles.put(entityId, profile);
     }
 
     /** 取消当前导航并立即停止实体。 */
@@ -157,6 +164,7 @@ public class NavigationSystem extends IteratingSystem {
         agent.path.clear();
         agent.nextWaypoint = 0;
         agent.status = NavigationStatus.IDLE;
+        pathProfiles.remove(entityId);
         stopBody(entityId);
     }
 
@@ -169,21 +177,20 @@ public class NavigationSystem extends IteratingSystem {
         return agent.requestId == requestId ? agent.status : NavigationStatus.FAILED;
     }
 
-    /** 静态Fixture在当前地图内发生增删后，使导航图在下次请求时重建。 */
+    /** 全部静态几何失效；下次请求或正在移动实体更新时重建并重规划。 */
     public void invalidate() {
         profilesByMap.clear();
         Gdx.app.debug(TAG, "Navigation grids invalidated");
     }
 
-    /** 仅清理发生静态碰撞变更的地图，其它地图缓存保持可用。 */
+    /** 仅失效发生静态碰撞变更的地图，正在移动的请求保留目标并在下次更新重规划。 */
     public void invalidate(String mapId) { profilesByMap.remove(mapId); }
 
+    /** 保留旧事件入口；物理系统直接编辑静态几何也会同步失效，重复失效保持幂等。 */
     @Subscribe
     public void onEvent(B2dEvent event) {
-        if (event.type == B2dEvent.DEL_TILE_COLLIDER
-            || event.type == B2dEvent.CREATE_TILE_COLLIDER) {
+        if (event.type == B2dEvent.DEL_TILE_COLLIDER || event.type == B2dEvent.CREATE_TILE_COLLIDER)
             invalidate(event.mapId == null ? tiledMapSystem.getCurrent() : event.mapId);
-        }
     }
 
     @Override
@@ -205,6 +212,11 @@ public class NavigationSystem extends IteratingSystem {
         if (b2dBody.body == null) {
             fail(entityId, agent, "Navigation entity has no Box2D body");
             return;
+        }
+
+        if (pathProfiles.get(entityId) != profileFor(agent.pathMapName, agent.radius)) {
+            planPath(entityId, agent);
+            if (agent.status != NavigationStatus.MOVING) return;
         }
 
         Pos pos = mPos.get(entityId);
@@ -292,6 +304,7 @@ public class NavigationSystem extends IteratingSystem {
     }
 
     private void succeed(int entityId, NavigationAgent agent) {
+        pathProfiles.remove(entityId);
         agent.status = NavigationStatus.SUCCEEDED;
         agent.path.clear();
         agent.nextWaypoint = 0;
@@ -299,6 +312,7 @@ public class NavigationSystem extends IteratingSystem {
     }
 
     private void fail(int entityId, NavigationAgent agent, String reason) {
+        pathProfiles.remove(entityId);
         agent.status = NavigationStatus.FAILED;
         agent.path.clear();
         agent.nextWaypoint = 0;
@@ -322,6 +336,12 @@ public class NavigationSystem extends IteratingSystem {
         }
         return nextRequestId++;
     }
+
+    /** 实体删除或移除导航组件时不保留旧网格引用。 */
+    @Override protected void removed(int entityId) { pathProfiles.remove(entityId); }
+
+    /** 退出世界统一清理地图网格及运行路径引用。 */
+    @Override protected void dispose() { pathProfiles.clear(); profilesByMap.clear(); }
 
     private static final class NavigationProfile {
         private final NavigationGrid grid;

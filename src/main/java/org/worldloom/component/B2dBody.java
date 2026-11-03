@@ -66,6 +66,7 @@ public class B2dBody extends SerializeComponent implements Disposable {
         
         //先清理旧的物理body，防止内存泄漏和冲突
         if (body != null && b2dWorld != null) {
+            invalidateNavigation();
             try {
                 b2dWorld.destroyBody(body);
             } catch (Exception e) {
@@ -246,6 +247,7 @@ public class B2dBody extends SerializeComponent implements Disposable {
             FixtureSetup fixtureSetup = new FixtureSetup(fixtureDef,keyframeShapeData);
             keyframeFixSetups.add(fixtureSetup);
         }
+        invalidateNavigation();
     }
 
     /**
@@ -290,6 +292,7 @@ public class B2dBody extends SerializeComponent implements Disposable {
             }
             ShapeUtils.flipX(fixture.getShape(),regionWidth);
         }
+        invalidateNavigation();
     }
 
     /**
@@ -451,11 +454,13 @@ public class B2dBody extends SerializeComponent implements Disposable {
         public void commit() {
             if (target == null) throw new IllegalStateException("迁移已结束");
             if (b2dWorld.isLocked() || targetWorld.isLocked()) throw new IllegalStateException("物理步进中不能提交迁移");
+            invalidateNavigation();
             b2dWorld.destroyBody(body);
             b2dWorld = targetWorld;
             body = target;
             target = null;
             body.setActive(active);
+            invalidateNavigation();
         }
 
         /** 准备阶段任一步失败时释放目标身体，源身体保持完整。 */
@@ -468,6 +473,7 @@ public class B2dBody extends SerializeComponent implements Disposable {
     public void dispose() {
         disposeKeyframeShapes();
         if (body != null && b2dWorld != null) {
+            invalidateNavigation();
             try {
                 b2dWorld.destroyBody(body);
             } catch (Exception e) {
@@ -481,7 +487,21 @@ public class B2dBody extends SerializeComponent implements Disposable {
     /** 将像素位置同步到该实体自己所在的物理世界。 */
     public void setPos(Pos pos) {
         float worldScale = Worldloom.config().getWorldScale();
-        body.setTransform(worldScale*pos.x, worldScale*pos.y, body.getAngle());
+        float x = worldScale * pos.x, y = worldScale * pos.y;
+        if (body.getPosition().x == x && body.getPosition().y == y) return;
+        body.setTransform(x, y, body.getAngle());
+        invalidateNavigation();
+    }
+
+    /** 自动维护静态实体的导航拓扑；动态身体和纯交互传感器不触发网格重建。 */
+    public void invalidateNavigation() {
+        if (world == null || body == null || !body.isActive()
+            || body.getType() != BodyDef.BodyType.StaticBody) return;
+        for (Fixture fixture : body.getFixtureList()) if (!fixture.isSensor()) {
+            B2dSystem physics = world.getSystem(B2dSystem.class);
+            if (physics != null) physics.staticGeometryChanged(b2dWorld);
+            return;
+        }
     }
 
     @Override

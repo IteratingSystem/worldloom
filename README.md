@@ -1406,10 +1406,16 @@ root
 ### 21.5 使用边界
 
 当前实现只负责已加载地图内的静态 Box2D 障碍。传感器和动态 Body 不会固化进导航图，
-动态实体之间仍由 Box2D 碰撞处理；跨地图路线、后台 NPC 模拟和动态障碍重规划不属于这一层。
+动态实体之间仍由 Box2D 碰撞处理，导航请求和缓存按实体所属地图隔离。
 
-如果游戏在当前地图运行期间创建或删除了静态Fixture，应调用
-`world.getSystem(NavigationSystem.class).invalidate()`，让下一次寻路请求重新读取Box2D世界。
+`B2dBody`创建、删除、重载、移动、翻转、动画夹具变更和跨图迁移静态非传感器碰撞时，
+自动失效受影响地图的导航缓存；瓦片碰撞增删也使用同一入口。正常角色移动和纯交互传感器不触发重建。
+正在移动的实体在下次导航更新时复用原请求编号和目标重新规划，无法到达时停止并返回`FAILED`。
+多次变更合并为下次请求/更新时按地图及净空半径重建一次，未改变的地图继续复用缓存。
+
+若业务绕过`B2dBody`直接编辑原生Box2D静态夹具（包括active/type变化），编辑完成后调用
+`world.getSystem(B2dSystem.class).staticGeometryChanged(physicsWorld)`；也可明确调用
+`world.getSystem(NavigationSystem.class).invalidate(mapId)`。只应在主线程物理世界解锁时编辑。
 
 ## 22. Debuff系统
 

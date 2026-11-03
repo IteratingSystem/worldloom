@@ -85,6 +85,15 @@ public class B2dSystem extends BaseSystem {
     /** 提供全部物理环境供集中接触采样，调用方不得修改返回的注册表。 */
     public ObjectMap<String, World> getMapWorlds() { return mapWorlds; }
 
+    /** 静态非传感器几何改变后，仅失效所属图的导航缓存；原生Box2D直接编辑也可显式调用。 */
+    public void staticGeometryChanged(World physics) {
+        NavigationSystem navigation = world.getSystem(NavigationSystem.class);
+        if (navigation == null) return;
+        if (!isResidentMode()) { navigation.invalidate(); return; }
+        for (ObjectMap.Entry<String, World> entry : mapWorlds)
+            if (entry.value == physics) { navigation.invalidate(entry.key); return; }
+    }
+
     /** 仅更新观察图兼容引用，不搬运、释放或步进任何地图。 */
     public void selectViewedMap(String mapId) {
         if (!isResidentMode()) return;
@@ -120,6 +129,7 @@ public class B2dSystem extends BaseSystem {
         Array<Body> after = new Array<>(); physics.getBodies(after);
         for (Body body : after) if (!before.contains(body, true)) colliders.add(body);
         if (mapId.equals(tiledMapSystem.getCurrent())) tileCollider = colliders;
+        staticGeometryChanged(physics);
     }
 
     /** 仅供旧单图重建使用；常驻模式拒绝整图销毁，避免悬空的B2dBody引用。 */
@@ -131,6 +141,7 @@ public class B2dSystem extends BaseSystem {
         for (Body body : bodies) physics.destroyBody(body);
         Bag<Body> colliders = tileColliders.get(tiledMapSystem.getCurrent());
         if (colliders != null) colliders.clear();
+        staticGeometryChanged(physics);
     }
 
     /** 仅删除当前观察地图的瓦片碰撞，保留人物碰撞。 */
@@ -144,6 +155,7 @@ public class B2dSystem extends BaseSystem {
         if (colliders == null) return;
         for (Body body : colliders) physics.destroyBody(body);
         colliders.clear();
+        staticGeometryChanged(physics);
     }
 
     /** 每个地图以同一正常delta推进一次；不在按实体循环中重复step。 */

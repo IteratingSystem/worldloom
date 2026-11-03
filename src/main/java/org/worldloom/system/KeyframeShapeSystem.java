@@ -84,6 +84,7 @@ public class KeyframeShapeSystem extends IteratingSystem {
         state.time = animation.stateTime;
         if (unchanged) return;
 
+        b2dBody.invalidateNavigation();
         Array<Fixture> fixtureList = body.getFixtureList();
         // 反向删除，防止destroyFixture修改原数组后跳过相邻夹具。
         for (int i = fixtureList.size - 1; i >= 0; i--) {
@@ -117,6 +118,7 @@ public class KeyframeShapeSystem extends IteratingSystem {
         state.index = keyframeIndex;
         state.width = regionWidth;
         state.flip = b2dBody.needFlipX;
+        b2dBody.invalidateNavigation();
     }
 
     /** 实体删除或移除相关组件后清理缓存，防止复用实体编号继承旧身体。 */
