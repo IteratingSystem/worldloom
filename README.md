@@ -57,7 +57,9 @@ Worldloom 还集成了 box2dlights、gdx-ai、blade-ink、Artemis contrib event 
 | `WorldloomGameModule` | 把游戏业务系统注册到稳定的执行阶段 |
 | `EventSystem` | 在游戏代码与引擎系统之间传递实体、地图、相机、UI 等命令 |
 
-组件名称绑定复用`ReflectionManager.getSubTypesBySimpleName(Component.class)`的只读索引；同名组件会在加载时明确报错，避免按遍历顺序绑定到错误类型。通用`getSubTypesOfWithEngineAndGame`仍返回完整类型集合，二者均按宿主根类缓存；组件恢复按名称匹配镜像，保留原类型恢复顺序。
+组件名称绑定复用`ReflectionManager.getSubTypesBySimpleName(Component.class)`的只读索引；同名组件会在加载时明确报错，避免按遍历顺序绑定到错误类型。地图转换及恢复只查询实际挂载组件，并按缓存的类型顺序排序，保留原资源恢复顺序；更换宿主根类会清理名称和顺序缓存。
+
+Tiled类默认值按`propertytype`声明类型查索引，未声明时回退到属性名；未知或重复类型立即报错。实体恢复遇到未知组件、非序列化字段、非法枚举或数组转换失败时抛出包含地图/实体/字段位置的异常，并回滚本批创建的全部实体，不保留默认值掩盖错误。Tiled中已删除的组件字段也应一并清理；普通对象元数据仍可保留在组件之外。
 
 ## 3. 最小接入流程
 

@@ -41,6 +41,7 @@ public class ReflectionManager {
     private final HashMap<Map.Entry<Class, Class>, Set> subTypesCache = new HashMap<>();
     private final Map<Map.Entry<Class, Class>, Set<?>> combinedTypesCache = new HashMap<>();
     private final Map<Map.Entry<Class, Class>, Map<?, ?>> namedTypesCache = new HashMap<>();
+    private final Map<Map.Entry<Class, Class>, Map<String, Integer>> namedTypeOrders = new HashMap<>();
 
     // 单例限制构造器
     private ReflectionManager() {
@@ -54,6 +55,7 @@ public class ReflectionManager {
         if (ReflectionManager.ROOT_CLASS_GAME != ROOT_CLASS_GAME && instance != null) {
             instance.combinedTypesCache.clear();
             instance.namedTypesCache.clear();
+            instance.namedTypeOrders.clear();
         }
         ReflectionManager.ROOT_CLASS_GAME = ROOT_CLASS_GAME;
     }
@@ -93,6 +95,16 @@ public class ReflectionManager {
         Map<String, Class<? extends T>> result = java.util.Collections.unmodifiableMap(names);
         namedTypesCache.put(key, result);
         return result;
+    }
+
+    /** 缓存名称索引的原始顺序，允许只排序实际组件而保持既有资源恢复顺序。 */
+    public <T> Map<String, Integer> getSubTypeOrder(Class<T> type) {
+        Map.Entry<Class, Class> key = new AbstractMap.SimpleImmutableEntry<>(ROOT_CLASS_GAME, type);
+        return namedTypeOrders.computeIfAbsent(key, ignored -> {
+            Map<String, Integer> order = new HashMap<>();
+            for (String name : getSubTypesBySimpleName(type).keySet()) order.put(name, order.size());
+            return java.util.Collections.unmodifiableMap(order);
+        });
     }
     @SuppressWarnings("unchecked")
     public <T> Set<Class<? extends T>> getSubTypesOfWithGame(Class<T> type) {

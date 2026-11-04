@@ -12,7 +12,7 @@ import com.badlogic.gdx.maps.tiled.TiledMap;
 import com.badlogic.gdx.maps.tiled.TmxMapLoader;
 import com.badlogic.gdx.utils.GdxRuntimeException;
 import com.badlogic.gdx.utils.Array;
-import com.badlogic.gdx.utils.Json;
+import com.badlogic.gdx.utils.ObjectMap;
 import com.badlogic.gdx.utils.XmlReader;
 import org.worldloom.manager.JsonManager;
 import org.worldloom.map.CapsuleMapObject;
@@ -25,17 +25,18 @@ import org.worldloom.map.CapsuleMapObject;
  **/
 public class EcsMapLoader extends TmxMapLoader {
     private final static String TAG = EcsMapLoader.class.getSimpleName();
-    //tiled中"自定义属性"的导出文件地址
-    private final String propTypePath;
-    private PropertyType[] propertyTypes;
-    private FileHandle propClassHandle;
+    private final ObjectMap<String, PropertyType> propertyTypes = new ObjectMap<>();
+
+    /** 一次映射并索引Tiled自定义类型；缺文件或重复定义立即阻止加载。 */
     public EcsMapLoader(FileHandleResolver resolver, String propTypePath){
         super(resolver);
-        this.propTypePath = propTypePath;
-
-        propClassHandle = Gdx.files.internal(propTypePath);
-        Json json = JsonManager.getJson();
-        propertyTypes = json.fromJson(PropertyType[].class,propClassHandle);
+        PropertyType[] definitions = JsonManager.readConfig(PropertyType[].class, Gdx.files.internal(propTypePath));
+        for (PropertyType definition : definitions) {
+            if (definition == null || definition.name == null || definition.name.isBlank()
+                || propertyTypes.containsKey(definition.name))
+                throw new IllegalArgumentException("Invalid or duplicate Tiled property type: " + propTypePath);
+            propertyTypes.put(definition.name, definition);
+        }
     }
 
     /** 复用标准对象加载后保留胶囊形身份，并同步编号引用，防止被当成矩形区域。 */
@@ -54,6 +55,7 @@ public class EcsMapLoader extends TmxMapLoader {
         }
     }
 
+    /** 加载普通属性和类默认值；类按声明类型查索引，保留属性自身的名称。 */
     @Override
     protected void loadProperties (final MapProperties properties, XmlReader.Element element) {
         if (element == null) return;
@@ -89,22 +91,11 @@ public class EcsMapLoader extends TmxMapLoader {
             }else if ("class".equals(type)) {
                 MapProperties childProps = new MapProperties();
 
-                //读取自定义类型文件赋予初始值
-                if (propClassHandle.exists()) {
-                    for (PropertyType propertyType : propertyTypes) {
-                        if (!propertyType.name.equals(name)) {
-                            continue;
-                        }
-                        for (Member member : propertyType.members) {
-                            String n = member.name;
-                            Object v = member.value;
-                            String t = member.type;
-                            childProps.put(n, v);
-                        }
-                    }
-                }else {
-                    Gdx.app.error(TAG,"The custom type export file in Tiled does not exist!Path:"+propTypePath);
-                }
+                String declaredType = property.getAttribute("propertytype", name);
+                PropertyType definition = propertyTypes.get(declaredType);
+                if (definition == null || !"class".equals(definition.type) || definition.members == null)
+                    throw new GdxRuntimeException("Unknown Tiled class: " + declaredType + ", property: " + name);
+                for (Member member : definition.members) childProps.put(member.name, member.value);
 
 
                 //读取Tiled中配置的值
@@ -134,6 +125,7 @@ public class EcsMapLoader extends TmxMapLoader {
     }
 
 
+    /** 读取Tiled列表项目，不将XML节点传入实体恢复逻辑。 */
     private Array<String> parseListProperty(XmlReader.Element listElement) {
         Array<String> result = new Array<>();
         for (XmlReader.Element item : listElement.getChildrenByName("item")) {
@@ -145,6 +137,7 @@ public class EcsMapLoader extends TmxMapLoader {
         return result;
     }
 
+    /** 沿用Tiled标量转换，并保留引擎的列表扩展。 */
     protected Object castProperty (String name, Object value, String type) {
         if (type == null) {
             return value;

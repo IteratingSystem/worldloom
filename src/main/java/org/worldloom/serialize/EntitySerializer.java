@@ -51,8 +51,12 @@ public class EntitySerializer {
         }
     };
 
+    /** 只转换对象实际挂载的组件，名称索引与字段元数据在加载期间复用。 */
     public static EntityData createEntityData(String mapName, MapObjects mapObjects){
         EntityData entityDateList = new EntityData();
+        ReflectionManager reflectionManager = ReflectionManager.getInstance();
+        var compClasses = reflectionManager.getSubTypesBySimpleName(Component.class);
+        var order = reflectionManager.getSubTypeOrder(Component.class);
         for (MapObject mapObject : mapObjects) {
             String entityName = mapObject.getName();
             MapProperties properties = mapObject.getProperties();
@@ -66,12 +70,11 @@ public class EntitySerializer {
             entityDatum.name = entityName;
             entityDatum.type = properties.get("type", "", String.class);
 
-            // 获取所有组件
-            ReflectionManager reflectionManager = ReflectionManager.getInstance();
-            var compClasses = reflectionManager.getSubTypesBySimpleName(Component.class).values();
-
-            for (Class<? extends Component> compClass : compClasses) {
-                String simpleName = compClass.getSimpleName();
+            Array<String> names = new Array<>();
+            properties.getKeys().forEachRemaining(name -> { if (compClasses.containsKey(name)) names.add(name); });
+            names.sort(java.util.Comparator.comparingInt(order::get));
+            for (String simpleName : names) {
+                Class<? extends Component> compClass = compClasses.get(simpleName);
                 MapProperties property = properties.get(simpleName, null, MapProperties.class);
                 if (property == null) {
                     continue;
@@ -79,6 +82,13 @@ public class EntitySerializer {
                 CompMirror compMirror = new CompMirror();
                 compMirror.properties = new Properties();
                 compMirror.simpleName = simpleName;
+
+                property.getKeys().forEachRemaining(key -> {
+                    Field field = findField(compClass, key);
+                    if (field == null || !field.isAnnotationPresent(SerializeParam.class))
+                        throw new IllegalArgumentException("Unknown serializable field: " + simpleName + "." + key
+                            + ", map: " + mapName + ", entity: " + entityName);
+                });
 
                 Field[] fields = SERIALIZED_FIELDS.get(compClass);
                 for (int i = 0; i < fields.length; i++) {
@@ -322,24 +332,29 @@ public class EntitySerializer {
         return JsonManager.getJson().fromJson(value.getClass(), JsonManager.toJson(value));
     }
 
-    /** 按阶段恢复普通字段或实体引用，全部字段完成前不加载组件资源。 */
+    /** 按阶段恢复字段；非法组件、字段或值立即失败，由外层回滚整批实体。 */
     @SuppressWarnings("unchecked")
     private static void restoreFields(World world, EntityDatum entityDatum, Map<Integer, Integer> restoredIds, boolean references) {
         int entityId = entityDatum.entityId;
 
         Array<CompMirror> components = entityDatum.compMirrors;
         ReflectionManager reflectionManager = ReflectionManager.getInstance();
-        var compClasses = reflectionManager.getSubTypesBySimpleName(Component.class).values();
+        var types = reflectionManager.getSubTypesBySimpleName(Component.class);
+        var order = reflectionManager.getSubTypeOrder(Component.class);
         Map<String, CompMirror> mirrors = new HashMap<>();
         for (CompMirror mirror : components) {
+            if (!types.containsKey(mirror.simpleName))
+                throw new IllegalArgumentException("Unknown component: " + mirror.simpleName
+                    + ", map: " + entityDatum.mapId + ", entity: " + entityDatum.name);
             if (mirrors.putIfAbsent(mirror.simpleName, mirror) != null)
-                throw new IllegalArgumentException("重复组件镜像：" + mirror.simpleName);
+                throw new IllegalArgumentException("Duplicate component: " + mirror.simpleName);
         }
 
-        for (Class<? extends Component> aClass : compClasses) {
-            String simpleName = aClass.getSimpleName();
-            CompMirror compMirror = mirrors.get(simpleName);
-            if (compMirror == null) continue;
+        Array<CompMirror> ordered = new Array<>(components);
+        ordered.sort(java.util.Comparator.comparingInt(mirror -> order.get(mirror.simpleName)));
+        for (CompMirror compMirror : ordered) {
+            String simpleName = compMirror.simpleName;
+            Class<? extends Component> aClass = types.get(simpleName);
 
             ComponentMapper<? extends Component> mapper = world.getMapper(aClass);
             if (mapper == null) {
@@ -353,27 +368,23 @@ public class EntitySerializer {
             for (Property prop : props) {
                 String key = prop.key;
                 Object value = prop.value;
-                if (value == null) {
-                    continue;
-                }
                 try {
                     // 递归查找字段（包括父类）
                     Field field = findField(aClass, key);
                     if (field == null) {
-                        Gdx.app.error(TAG, "Failed to findField: " + key + " in " + compMirror.simpleName);
-                        continue;
+                        throw new IllegalArgumentException("Unknown field");
                     }
                     if (!field.isAnnotationPresent(SerializeParam.class)) {
-                        Gdx.app.error(TAG,"Field " + key + " is not annotated with " + SerializeParam.class.getSimpleName() + "in "+compMirror.simpleName );
-                        continue;
+                        throw new IllegalArgumentException("Field is not annotated with SerializeParam");
                     }
                     if (field.isAnnotationPresent(EntityReference.class) != references) continue;
+                    if (value == null) continue;
                     field.setAccessible(true); // 允许访问私有字段
 
                     Class<?> type = field.getType();
                     if (field.isAnnotationPresent(EntityReference.class)) {
                         if (type != int.class) {
-                            throw new IllegalArgumentException("实体引用仅支持int字段：" + field);
+                            throw new IllegalArgumentException("Entity reference requires an int field: " + field);
                         }
                         int oldId = ((Number) coerceType(value, int.class)).intValue();
                         int resolved = -1;
@@ -387,29 +398,7 @@ public class EntitySerializer {
                         value = oldId < 0 ? -1 : resolved;
                     }
                     if (type.isEnum()) {
-                        // 假设 value 为 String（枚举名称）或 Number（枚举序数）
-                        if (value instanceof String) {
-                            try {
-                                Class<? extends Enum> enumClass = type.asSubclass(Enum.class);
-                                value = Enum.valueOf(enumClass, (String) value);
-                            } catch (IllegalArgumentException e) {
-                                Gdx.app.error(TAG, "Invalid enum name: " + value + " for field " + key);
-                                continue;
-                            }
-                        } else if (value instanceof Number) {
-                            // 按枚举序数转换
-                            int ordinal = ((Number) value).intValue();
-                            Object[] enumConstants = type.getEnumConstants();
-                            if (ordinal >= 0 && ordinal < enumConstants.length) {
-                                value = enumConstants[ordinal];
-                            } else {
-                                Gdx.app.error(TAG, "Invalid enum ordinal: " + ordinal + " for field " + key);
-                                continue;
-                            }
-                        } else {
-                            Gdx.app.error(TAG, "Unsupported value type for enum field " + key + ": " + value.getClass());
-                            continue;
-                        }
+                        value = restoreEnum(type, value);
                     } else {
                         value = coerceType(value, type);
                     }
@@ -421,8 +410,9 @@ public class EntitySerializer {
                     field.set(component, value);
 
 
-                } catch (NoSuchFieldException | IllegalAccessException e) {
-                    throw new RuntimeException("Failed to set field " + key + " on " + aClass.getName(), e);
+                } catch (IllegalAccessException | RuntimeException e) {
+                    throw new IllegalArgumentException("Failed to restore " + simpleName + "." + key
+                        + ", map: " + entityDatum.mapId + ", entity: " + entityDatum.name, e);
                 }
             }
 
@@ -432,10 +422,25 @@ public class EntitySerializer {
     /**
      * 从类型缓存查找字段，包括父类，避免每次读档或实体同步重复反射查找。
      */
-    private static Field findField(Class<?> clazz, String fieldName) throws NoSuchFieldException {
+    private static Field findField(Class<?> clazz, String fieldName) {
         return RESTORE_FIELDS.get(clazz).get(fieldName);
     }
 
+    /** 仅接受合法枚举名、整数序号或已映射的枚举实例，禁止错误值退回默认状态。 */
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static Object restoreEnum(Class<?> type, Object value) {
+        if (type.isInstance(value)) return value;
+        if (value instanceof String name) return Enum.valueOf(type.asSubclass(Enum.class), name);
+        if (value instanceof Number number) {
+            double ordinal = number.doubleValue();
+            Object[] constants = type.getEnumConstants();
+            if (Double.isFinite(ordinal) && ordinal == Math.rint(ordinal)
+                && ordinal >= 0 && ordinal < constants.length) return constants[(int) ordinal];
+        }
+        throw new IllegalArgumentException("Invalid enum value for " + type.getName() + ": " + value);
+    }
+
+    /** 将Tiled及存档的标量转换为字段声明类型，转换失败交由恢复边界报告。 */
     private static Object coerceType(Object value, Class<?> type) {
         if (value == null || type.isInstance(value)) return value;
         if (value instanceof Number n) {
@@ -458,7 +463,7 @@ public class EntitySerializer {
         return value;
     }
 
-    /** 按字段泛型恢复存档中的数组元素，避免自定义对象被保留为通用Map。 */
+    /** 按字段泛型恢复数组；转换失败抛出位置明确的异常，不保留未映射元素。 */
     @SuppressWarnings({"unchecked", "rawtypes"})
     static void restoreArrayElements(Field field, String fieldName,
                                      Array<?> arrayValue) {
@@ -480,8 +485,8 @@ public class EntitySerializer {
             }
             try {
                 Object restored;
-                if (elementType.isEnum() && element instanceof String name) {
-                    restored = Enum.valueOf(elementType.asSubclass(Enum.class), name);
+                if (elementType.isEnum()) {
+                    restored = restoreEnum(elementType, element);
                 } else {
                     Object coerced = coerceType(element, elementType);
                     restored = elementType.isInstance(coerced)
@@ -491,7 +496,7 @@ public class EntitySerializer {
                 }
                 rawArray.set(i, restored);
             } catch (RuntimeException exception) {
-                Gdx.app.error(TAG, "Failed to restore array element for field "
+                throw new IllegalArgumentException("Failed to restore array element for field "
                     + fieldName + " at index " + i, exception);
             }
         }
