@@ -51,18 +51,20 @@ public class NavigationSystem extends IteratingSystem {
     private String legacyMapName;
     private int nextRequestId = 1;
 
+    /** 使用默认道路权重创建导航；缩放必须是有限正数。 */
     public NavigationSystem(float worldScale) {
         this(worldScale, new ObjectMap<>(), 1f, 4f);
     }
 
+    /** 复制各地图道路配置，拒绝不能参与网格与速度计算的数值。 */
     public NavigationSystem(float worldScale,
                             ObjectMap<String, String> roadLayerNames,
                             float roadCost, float offRoadCost) {
-        if (worldScale <= 0f) {
+        if (!Float.isFinite(worldScale) || worldScale <= 0f) {
             throw new IllegalArgumentException("world scale must be positive");
         }
-        if (roadLayerNames == null || roadCost <= 0f
-            || offRoadCost < roadCost) {
+        if (roadLayerNames == null || !Float.isFinite(roadCost) || !Float.isFinite(offRoadCost)
+            || roadCost <= 0f || offRoadCost < roadCost) {
             throw new IllegalArgumentException("navigation configuration is invalid");
         }
         this.worldScale = worldScale;
@@ -83,12 +85,15 @@ public class NavigationSystem extends IteratingSystem {
     }
 
     /**
-     * 请求实体移动到地图像素坐标，并允许在目标指定距离内停止。
+     * 请求实体移动到地图像素坐标；非法数值在修改现有请求前抛出异常。
      *
      * @return 本次请求编号，实体不具备导航条件时返回-1
      */
     public int navigate(int entityId, float targetX, float targetY,
                         float stopDistance) {
+        if (!Float.isFinite(targetX) || !Float.isFinite(targetY)
+            || !Float.isFinite(stopDistance) || stopDistance < 0f)
+            throw new IllegalArgumentException("Navigation target and stop distance must be finite; distance cannot be negative");
         refreshMapIfNeeded();
         String mapId = mapFor(entityId);
         if (!mPos.has(entityId) || !mB2dBody.has(entityId)) {
@@ -102,7 +107,7 @@ public class NavigationSystem extends IteratingSystem {
         agent.requestId = requestId;
         agent.targetX = targetX;
         agent.targetY = targetY;
-        agent.stopDistance = Math.max(0f, stopDistance);
+        agent.stopDistance = stopDistance;
         agent.pathMapName = mapId;
         planPath(entityId, agent);
         return requestId;
@@ -113,13 +118,12 @@ public class NavigationSystem extends IteratingSystem {
         pathProfiles.remove(entityId);
         agent.path.clear();
         agent.nextWaypoint = 0;
-        if (agent.speed <= 0f || agent.radius < 0f
-            || agent.waypointTolerance < 0f) {
+        Pos pos = mPos.get(entityId);
+        if (!validGeometry(agent, pos)) {
             fail(entityId, agent, "Navigation agent configuration is invalid");
             return;
         }
 
-        Pos pos = mPos.get(entityId);
         float arrivalDistance = Math.max(agent.waypointTolerance,
             agent.stopDistance);
         if (Vector2.dst(pos.x, pos.y, agent.targetX, agent.targetY) <= arrivalDistance) {
@@ -198,10 +202,15 @@ public class NavigationSystem extends IteratingSystem {
         refreshMapIfNeeded();
     }
 
+    /** 更新移动前再次校验可动态修改的组件，避免非法速度进入Box2D。 */
     @Override
     protected void process(int entityId) {
         NavigationAgent agent = mNavigationAgent.get(entityId);
         if (agent.status != NavigationStatus.MOVING) {
+            return;
+        }
+        if (!validGeometry(agent, mPos.get(entityId))) {
+            fail(entityId, agent, "Navigation geometry is invalid");
             return;
         }
         if (!mapFor(entityId).equals(agent.pathMapName)) {
@@ -240,6 +249,17 @@ public class NavigationSystem extends IteratingSystem {
         succeed(entityId, agent);
     }
 
+    /** 检查请求、当前位置和动态导航参数；失败时只能停止，不能继续物理移动。 */
+    private static boolean validGeometry(NavigationAgent agent, Pos pos) {
+        return Float.isFinite(pos.x) && Float.isFinite(pos.y)
+            && Float.isFinite(agent.targetX) && Float.isFinite(agent.targetY)
+            && Float.isFinite(agent.speed) && agent.speed > 0f
+            && Float.isFinite(agent.radius) && agent.radius >= 0f
+            && Float.isFinite(agent.waypointTolerance) && agent.waypointTolerance >= 0f
+            && Float.isFinite(agent.stopDistance) && agent.stopDistance >= 0f;
+    }
+
+    /** 按剩余距离限制本帧速度，避免越过路径点。 */
     private void moveTowards(Body body, Pos pos, Vector2 waypoint, float speed) {
         float dx = waypoint.x - pos.x;
         float dy = waypoint.y - pos.y;

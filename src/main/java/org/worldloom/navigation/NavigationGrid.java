@@ -24,9 +24,11 @@ public final class NavigationGrid implements IndexedGraph<NavigationNode> {
     private final float[] terrainCosts;
     private final Array<Connection<NavigationNode>>[] connections;
 
+    /** 创建有限正尺寸网格；净空在各工厂生成障碍膨胀前校验。 */
     @SuppressWarnings("unchecked")
     private NavigationGrid(int width, int height, float tileWidth, float tileHeight,
                            boolean[] blocked, float[] terrainCosts) {
+        validateMetrics(tileWidth, tileHeight, 0f);
         this.width = width;
         this.height = height;
         this.tileWidth = tileWidth;
@@ -50,7 +52,8 @@ public final class NavigationGrid implements IndexedGraph<NavigationNode> {
                                                    float tileWidth,
                                                    float tileHeight,
                                                    float clearance) {
-        if (cells == null || cells.length == 0 || cells[0].length == 0) {
+        validateMetrics(tileWidth, tileHeight, clearance);
+        if (cells == null || cells.length == 0 || cells[0] == null || cells[0].length == 0) {
             throw new IllegalArgumentException("blocked cells cannot be empty");
         }
         int height = cells.length;
@@ -79,7 +82,8 @@ public final class NavigationGrid implements IndexedGraph<NavigationNode> {
                                                     float roadCost,
                                                     float offRoadCost,
                                                     float clearance) {
-        if (blockedCells == null || blockedCells.length == 0
+        validateMetrics(tileWidth, tileHeight, clearance);
+        if (blockedCells == null || blockedCells.length == 0 || blockedCells[0] == null
             || blockedCells[0].length == 0 || roadCells == null
             || roadCells.length != blockedCells.length) {
             throw new IllegalArgumentException("weighted cells cannot be empty");
@@ -118,7 +122,7 @@ public final class NavigationGrid implements IndexedGraph<NavigationNode> {
         if (box2dWorld == null) {
             throw new IllegalArgumentException("Box2D world cannot be null");
         }
-        if (worldScale <= 0f) {
+        if (!Float.isFinite(worldScale) || worldScale <= 0f) {
             throw new IllegalArgumentException("world scale must be positive");
         }
         validateCosts(roadCost, offRoadCost);
@@ -126,6 +130,7 @@ public final class NavigationGrid implements IndexedGraph<NavigationNode> {
         int height = map.getProperties().get("height", 0, Integer.class);
         int tileWidth = map.getProperties().get("tilewidth", 0, Integer.class);
         int tileHeight = map.getProperties().get("tileheight", 0, Integer.class);
+        validateMetrics(tileWidth, tileHeight, clearance);
         if (width <= 0 || height <= 0 || tileWidth <= 0 || tileHeight <= 0) {
             throw new IllegalArgumentException("map must define a finite tile grid");
         }
@@ -139,7 +144,9 @@ public final class NavigationGrid implements IndexedGraph<NavigationNode> {
             terrainCosts);
     }
 
+    /** 越界或非有限坐标没有可用节点，不能被整数转换误映射为原点。 */
     public NavigationNode getNodeAt(float x, float y) {
+        if (!Float.isFinite(x) || !Float.isFinite(y)) return null;
         int column = (int)Math.floor(x / tileWidth);
         int row = (int)Math.floor(y / tileHeight);
         if (!contains(column, row)) {
@@ -272,8 +279,17 @@ public final class NavigationGrid implements IndexedGraph<NavigationNode> {
         return costs;
     }
 
+    /** 网格尺寸必须为有限正数，净空允许零但不能为负数或非有限数。 */
+    private static void validateMetrics(float tileWidth, float tileHeight, float clearance) {
+        if (!Float.isFinite(tileWidth) || !Float.isFinite(tileHeight)
+            || tileWidth <= 0f || tileHeight <= 0f || !Float.isFinite(clearance) || clearance < 0f)
+            throw new IllegalArgumentException("Tile dimensions must be finite and positive; clearance must be finite and non-negative");
+    }
+
+    /** 道路权重参与A*比较，不接受NaN或无穷大。 */
     private static void validateCosts(float roadCost, float offRoadCost) {
-        if (roadCost <= 0f || offRoadCost < roadCost) {
+        if (!Float.isFinite(roadCost) || !Float.isFinite(offRoadCost)
+            || roadCost <= 0f || offRoadCost < roadCost) {
             throw new IllegalArgumentException(
                 "navigation costs must satisfy 0 < road cost <= off-road cost");
         }
