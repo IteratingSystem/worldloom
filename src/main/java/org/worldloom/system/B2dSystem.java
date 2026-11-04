@@ -7,6 +7,7 @@ import com.badlogic.gdx.maps.MapLayer;
 import com.badlogic.gdx.maps.tiled.TiledMapTileLayer;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.physics.box2d.Body;
+import com.badlogic.gdx.physics.box2d.Fixture;
 import com.badlogic.gdx.physics.box2d.World;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ObjectMap;
@@ -26,6 +27,7 @@ public class B2dSystem extends BaseSystem {
     private final boolean doSleep, combineTileCollisions;
     private final ObjectMap<String, World> mapWorlds = new ObjectMap<>();
     private final ObjectMap<String, Bag<Body>> tileColliders = new ObjectMap<>();
+    private final ObjectMap<World, DefContactListener> contacts = new ObjectMap<>();
     /** 当前观察地图的旧接口；实体业务应调用getWorldForEntity。 */
     public World box2DWorld;
     public TiledTileCollisionToBox2d tiledTileCollisionToBox2d;
@@ -58,8 +60,18 @@ public class B2dSystem extends BaseSystem {
     private World createWorld() {
         World physics = new World(new Vector2(gx, gy), doSleep);
         physics.setContinuousPhysics(true);
-        physics.setContactListener(new DefContactListener());
+        DefContactListener listener = new DefContactListener();
+        contacts.put(physics, listener);
+        physics.setContactListener(listener);
         return physics;
+    }
+
+    /** 从夹具所属物理世界的接触索引追加结果；非本系统管理的世界由调用方处理。 */
+    public boolean collectContacts(Fixture fixture, Bag<Fixture> output) {
+        DefContactListener listener = contacts.get(fixture.getBody().getWorld());
+        if (listener == null) return false;
+        listener.collectContacts(fixture, output);
+        return true;
     }
 
     /** 判断当前会话是否启用了显式正式地图目录。 */
@@ -179,6 +191,8 @@ public class B2dSystem extends BaseSystem {
         for (int i = 0; i < entities.size(); i++) bodies.get(entities.get(i)).dispose();
         if (mapWorlds.isEmpty()) box2DWorld.dispose();
         else for (World physics : mapWorlds.values()) physics.dispose();
+        for (DefContactListener listener : contacts.values()) listener.clearContacts();
+        contacts.clear();
         mapWorlds.clear(); tileColliders.clear(); tileCollider.clear(); box2DWorld = null;
     }
 }

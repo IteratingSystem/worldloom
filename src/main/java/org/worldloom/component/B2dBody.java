@@ -335,6 +335,14 @@ public class B2dBody extends SerializeComponent implements Disposable {
      */
     public Bag<Fixture> getContactFixtures(Fixture fixture){
         Bag<Fixture> fixtures = new Bag<>();
+        collectContacts(fixture, fixtures);
+        return fixtures;
+    }
+
+    /** 优先使用所属地图的接触索引；独立创建的物理世界保留原有即时扫描能力。 */
+    private void collectContacts(Fixture fixture, Bag<Fixture> fixtures) {
+        B2dSystem physics = world == null ? null : world.getSystem(B2dSystem.class);
+        if (physics != null && physics.collectContacts(fixture, fixtures)) return;
         Array.ArrayIterator<Contact> iterator = new Array.ArrayIterator<>(b2dWorld.getContactList());
         while (iterator.hasNext()) {
             Contact contact = iterator.next();
@@ -353,7 +361,6 @@ public class B2dBody extends SerializeComponent implements Disposable {
             }
             fixtures.add(contactFix);
         }
-        return fixtures;
     }
 
     /**
@@ -362,9 +369,9 @@ public class B2dBody extends SerializeComponent implements Disposable {
      */
     public Bag<Fixture> getContactFixtures(int sensorType){
         Bag<Fixture> contactFixtures = new Bag<>();
-        Bag<Fixture> fixtures = getFixtures(sensorType);
-        for (Fixture fixture : fixtures) {
-            contactFixtures.addAll(getContactFixtures(fixture));
+        for (Fixture fixture : body.getFixtureList()) {
+            if (fixture.getUserData() instanceof DefFixData data && data.sensorType == sensorType)
+                collectContacts(fixture, contactFixtures);
         }
         return contactFixtures;
     }
@@ -374,9 +381,9 @@ public class B2dBody extends SerializeComponent implements Disposable {
      */
     public Bag<Fixture> getContactFixtures(CategoryBits categoryBits){
         Bag<Fixture> contactFixtures = new Bag<>();
-        Bag<Fixture> fixtures = getFixtures(categoryBits);
-        for (Fixture fixture : fixtures) {
-            contactFixtures.addAll(getContactFixtures(fixture));
+        for (Fixture fixture : body.getFixtureList()) {
+            if (fixture.getFilterData().categoryBits == categoryBits.getBit())
+                collectContacts(fixture, contactFixtures);
         }
         return contactFixtures;
     }

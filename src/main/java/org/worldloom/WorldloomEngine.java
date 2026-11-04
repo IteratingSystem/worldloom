@@ -14,10 +14,20 @@ public final class WorldloomEngine implements AutoCloseable {
     private final EventSystem events;
     private boolean disposed;
 
+    /** 接管已初始化世界；实体加载失败也由本入口释放，宿主无需持有失败实例。 */
     WorldloomEngine(World world) {
         this.world = world;
-        events = world.getSystem(EventSystem.class);
-        events.dispatch(new EntityEvent(EntityEvent.BUILD_ALL));
+        try {
+            events = world.getSystem(EventSystem.class);
+            events.dispatch(new EntityEvent(EntityEvent.BUILD_ALL));
+        } catch (RuntimeException | Error failure) {
+            try {
+                world.dispose();
+            } catch (RuntimeException | Error cleanupFailure) {
+                if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+            }
+            throw failure;
+        }
     }
 
     public void update(float delta) {

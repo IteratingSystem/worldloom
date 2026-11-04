@@ -4,6 +4,8 @@ Worldloom 是基于 LibGDX、Artemis-ODB 和 Tiled 的嵌入式 2D ECS 游戏引
 
 Worldloom 不接管 LibGDX 的 `ApplicationListener` 或 `Screen`。游戏项目仍然拥有平台启动、页面和业务内容；引擎通过 `WorldloomEngine` 统一管理 ECS World 的创建、系统顺序、每帧更新、窗口变化和释放。
 
+构建器在 Artemis World 完整初始化后才加载实体。此阶段发生异常会释放已创建的 World，再重新抛出原始异常；清理异常作为 suppressed 保留。宿主只需持有成功返回的 engine，不要再次释放失败构建中的世界。这不覆盖 Artemis 自身构造期间的系统初始化失败；各系统的初始化资源仍须自行保证异常安全。
+
 当前源码版本以`gradle.properties`中的`worldloomVersion`为准。版本号的选择与发布步骤见 [VERSIONING.md](VERSIONING.md)。
 
 ## 1. 环境与依赖
@@ -1013,7 +1015,7 @@ WorldloomEngine engine = Worldloom.engineBuilder()
 
 `FixtureGeometry.overlaps(fixture, rectangle)`精确检查圆、凸多边形、边及闭合/开放链；矩形使用Box2D世界单位，传感器等业务过滤由调用方处理。圆相切不算相交，多边形及线段接触边界算相交，保持原有LibGDX判定。导航继续在调用前施加面形状格网内缩容差并换算物理单位；底层共用几何，业务容差留在调用方，不额外创建策略类型。
 
-`B2dBody.getContactFixtures` 只返回 `Contact.isTouching()` 为真的实际接触；Box2D broadphase 保留的近邻候选不算交互接触。
+`B2dBody.getContactFixtures` 只返回实际接触；Box2D broadphase 保留的近邻候选不算交互接触。引擎物理世界由 `DefContactListener` 在 begin/end 回调中维护各夹具的接触索引，查询不再扫描整图 Contact，也不保留原生 Contact；同一对链条夹具的多个接触按计数合并。销毁夹具、停用刚体与跨图迁移沿用 Box2D 的结束回调解除引用，退出世界后清空索引。不要替换引擎世界的 ContactListener；业务仍通过夹具的 `DefFixData.listener` 接入。独立创建、未交给 B2dSystem 管理的世界保留即时扫描行为。
 
 无窗口回归检查：`./gradlew test`。`EntityRestoreTest` 仅使用 ECS、原生 Box2D 和模拟纹理，不创建桌面后端或游戏窗口。
 

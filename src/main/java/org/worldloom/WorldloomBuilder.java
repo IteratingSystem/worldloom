@@ -80,6 +80,7 @@ public final class WorldloomBuilder {
         return this;
     }
 
+    /** 创建运行世界；实体加载失败时回收已创建世界，并保留原始失败原因。 */
     public WorldloomEngine build() {
         // 安装地图系统前必须已经选择新游戏或读档会话。
         GameSnapshotManager.getInstance().getCurrentMap();
