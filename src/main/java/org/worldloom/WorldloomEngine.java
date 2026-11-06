@@ -77,12 +77,13 @@ public final class WorldloomEngine implements AutoCloseable {
         dispose();
     }
 
+    /** 进入关闭状态后才释放系统；即使清理失败也禁止更新及重复释放原生资源。 */
     public void dispose() {
         if (disposed) {
             return;
         }
-        world.dispose();
         disposed = true;
+        world.dispose();
     }
 
     private void requireActive() {

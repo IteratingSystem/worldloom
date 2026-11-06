@@ -33,12 +33,11 @@ public class B2dSystem extends BaseSystem {
     public TiledTileCollisionToBox2d tiledTileCollisionToBox2d;
     public Bag<Body> tileCollider = new Bag<>();
 
-    /** 保存全局物理参数并预建旧单图环境，实际地图注册在initialize完成。 */
+    /** 只保存物理参数；原生世界延迟到initialize创建，安装系统失败不占用原生资源。 */
     public B2dSystem(float gx, float gy, boolean doSleep, float worldScale,
                      boolean combineTileCollisions) {
         this.gx = gx; this.gy = gy; this.doSleep = doSleep;
         this.worldScale = worldScale; this.combineTileCollisions = combineTileCollisions;
-        box2DWorld = createWorld();
     }
 
     /** 配置常驻图时一次创建全部物理环境；模板图不会进入此目录。 */
@@ -48,7 +47,7 @@ public class B2dSystem extends BaseSystem {
         for (String mapId : maps) {
             if (tiledMapSystem.getTiledMap(mapId) == null)
                 throw new IllegalArgumentException("物理地图不存在: " + mapId);
-            World physics = mapWorlds.isEmpty() ? box2DWorld : createWorld();
+            World physics = createWorld();
             mapWorlds.put(mapId, physics);
             tileColliders.put(mapId, new Bag<>());
             createTileCollider(mapId);
@@ -189,7 +188,7 @@ public class B2dSystem extends BaseSystem {
         var entities = world.getAspectSubscriptionManager().get(Aspect.all(B2dBody.class)).getEntities();
         var bodies = world.getMapper(B2dBody.class);
         for (int i = 0; i < entities.size(); i++) bodies.get(entities.get(i)).dispose();
-        if (mapWorlds.isEmpty()) box2DWorld.dispose();
+        if (mapWorlds.isEmpty()) { if (box2DWorld != null) box2DWorld.dispose(); }
         else for (World physics : mapWorlds.values()) physics.dispose();
         for (DefContactListener listener : contacts.values()) listener.clearContacts();
         contacts.clear();

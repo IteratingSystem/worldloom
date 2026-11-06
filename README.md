@@ -4,7 +4,7 @@ Worldloom 是基于 LibGDX、Artemis-ODB 和 Tiled 的嵌入式 2D ECS 游戏引
 
 Worldloom 不接管 LibGDX 的 `ApplicationListener` 或 `Screen`。游戏项目仍然拥有平台启动、页面和业务内容；引擎通过 `WorldloomEngine` 统一管理 ECS World 的创建、系统顺序、每帧更新、窗口变化和释放。
 
-构建器在 Artemis World 完整初始化后才加载实体。此阶段发生异常会释放已创建的 World，再重新抛出原始异常；清理异常作为 suppressed 保留。宿主只需持有成功返回的 engine，不要再次释放失败构建中的世界。这不覆盖 Artemis 自身构造期间的系统初始化失败；各系统的初始化资源仍须自行保证异常安全。
+构建器在 Artemis World 完整初始化后才加载实体。4.13.5起，注入、系统初始化或实体加载失败都会尝试释放世界，再重新抛出原始异常；清理异常作为 suppressed 保留。物理世界延迟至系统initialize创建，系统安装失败不会预占Box2D资源。宿主只持有成功返回的engine。dispose进入时立即关闭引擎入口，即使某个系统清理失败，后续update和重复dispose也不会再次访问或释放原生资源；各系统仍须支持未完成初始化时的清理。
 
 当前源码版本以`gradle.properties`中的`worldloomVersion`为准。版本号的选择与发布步骤见 [VERSIONING.md](VERSIONING.md)。
 
