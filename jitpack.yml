@@ -1,4 +1,12 @@
 jdk:
   - openjdk21
 install:
-  - ./gradlew --no-daemon build publishToMavenLocal --console=plain
+  # 仅对Wrapper下载/启动预热重试，正式编译或检查失败直接结束，避免掩盖代码错误。
+  - |
+    for attempt in 1 2 3; do
+      if ./gradlew --no-daemon --version; then break; fi
+      if [ "$attempt" -eq 3 ]; then exit 1; fi
+      echo "Gradle bootstrap failed; retrying in 5 seconds ($attempt/3)."
+      sleep 5
+    done
+    ./gradlew --no-daemon build publishToMavenLocal --console=plain

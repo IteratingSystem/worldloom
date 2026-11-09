@@ -1635,3 +1635,5 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 - `RenderPhysicsSystem`仅在DEBUG实际绘制时创建调试渲染器，并在退出世界时幂等释放；非调试会话不创建其GL资源。
 - `MapManager.animationIndex(tileset)`按图集对象身份缓存`TileAnimationIndex`，动作与帧形状描述只解析一次。`TileAnimations`通过`createAnimations(group)`取得独立播放实例；时间、随机状态、帧数组与时长数组相互隔离。`B2dBody`仍为每个实体独立创建Shape、Fixture及监听器，不再修改共享Tiled对象的FixDef动作/帧号。
 - 图集源数据及`frameShapes(group)`中的MapObject按只读约定使用。工具原位修改动作/碰撞元数据后调用`MapManager.invalidateAnimationIndex(tileset)`；随后创建或reload的组件使用新描述，现有播放实例不会被自动重置。`AssetManager.dispose()`清空目录，缓存不持有游戏World或实体；普通切图不必失效。
+
+发布补充（4.15.3）：JitPack先预热Wrapper，下载/启动失败最多尝试三次、间隔5秒；正式build/publish只执行一次，编译和检查失败直接报告。4.15.2的首次远程构建在Gradle分发下载处遇到HTTP 504，未执行代码编译；不移动该标签，使用后续修订发布。
