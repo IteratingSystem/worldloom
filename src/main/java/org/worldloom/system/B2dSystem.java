@@ -201,6 +201,8 @@ public class B2dSystem extends BaseSystem {
         lastStepSeconds = (float) (steps * PHYSICS_STEP);
         if (steps == 0) return;
         physicsRemainder = Math.max(0, physicsRemainder - (double) steps * PHYSICS_STEP);
+        NavigationSystem navigation = world.getSystem(NavigationSystem.class);
+        if (navigation != null) navigation.preparePhysicsFrame();
         if (mapWorlds.isEmpty()) step(box2DWorld, steps);
         else for (World physics : mapWorlds.values()) step(physics, steps);
     }

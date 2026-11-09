@@ -51,6 +51,7 @@ public class NavigationSystem extends IteratingSystem {
     private B2dSystem b2dSystem;
     private String legacyMapName;
     private int nextRequestId = 1;
+    private final java.util.Map<com.badlogic.gdx.physics.box2d.World, IntBag> physicsGroups = new java.util.IdentityHashMap<>();
 
     /** 使用默认道路权重创建导航；缩放必须是有限正数。 */
     public NavigationSystem(float worldScale) {
@@ -260,11 +261,25 @@ public class NavigationSystem extends IteratingSystem {
             && Float.isFinite(agent.stopDistance) && agent.stopDistance >= 0f;
     }
 
-    /** 实际物理子步前按实时Body位置限速，避免渲染帧与物理频率不同而越过路径点。 */
+    /** 每个实际物理帧只分组一次；按当前Body所属World读取跨图结果，所有后台地图仍正常推进。 */
+    public void preparePhysicsFrame() {
+        for (IntBag group : physicsGroups.values()) group.clear();
+        IntBag ids = getSubscription().getEntities();
+        for (int i = 0; i < ids.size(); i++) {
+            int id = ids.get(i);
+            Body body = mB2dBody.get(id).body;
+            if (body != null && body.isActive() && mNavigationAgent.get(id).status == NavigationStatus.MOVING)
+                physicsGroups.computeIfAbsent(body.getWorld(), ignored -> new IntBag()).add(id);
+        }
+        physicsGroups.values().removeIf(IntBag::isEmpty);
+    }
+
+    /** 实际物理子步只遍历本图的移动者；用实时Body位置限速，不重新运行寻路或日程。 */
     public void preparePhysicsStep(com.badlogic.gdx.physics.box2d.World physics, float seconds) {
         if (!Float.isFinite(seconds) || seconds <= 0)
             throw new IllegalArgumentException("Navigation physics step must be finite and positive");
-        IntBag ids = getSubscription().getEntities();
+        IntBag ids = physicsGroups.get(physics);
+        if (ids == null) return;
         for (int i = 0; i < ids.size(); i++) {
             int id = ids.get(i);
             NavigationAgent agent = mNavigationAgent.get(id);
@@ -389,7 +404,7 @@ public class NavigationSystem extends IteratingSystem {
     @Override protected void removed(int entityId) { pathProfiles.remove(entityId); }
 
     /** 退出世界统一清理地图网格及运行路径引用。 */
-    @Override protected void dispose() { pathProfiles.clear(); profilesByMap.clear(); }
+    @Override protected void dispose() { pathProfiles.clear(); profilesByMap.clear(); physicsGroups.clear(); }
 
     private static final class NavigationProfile {
         private final NavigationGrid grid;
