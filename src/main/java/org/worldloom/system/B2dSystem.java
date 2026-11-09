@@ -11,6 +11,7 @@ import com.badlogic.gdx.physics.box2d.Fixture;
 import com.badlogic.gdx.physics.box2d.World;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ObjectMap;
+import com.badlogic.gdx.utils.ObjectLongMap;
 import dev.lyze.projectTrianglePlatforming.TiledTileCollisionToBox2d;
 import dev.lyze.projectTrianglePlatforming.TiledTileCollisionToBox2dOptions;
 import net.mostlyoriginal.api.event.common.Subscribe;
@@ -28,6 +29,10 @@ public class B2dSystem extends BaseSystem {
     private final ObjectMap<String, World> mapWorlds = new ObjectMap<>();
     private final ObjectMap<String, Bag<Body>> tileColliders = new ObjectMap<>();
     private final ObjectMap<World, DefContactListener> contacts = new ObjectMap<>();
+    private final ObjectLongMap<World> geometryRevisions = new ObjectLongMap<>();
+    private static final double PHYSICS_STEP = 1.0 / 60;
+    private static final int MAX_SUBSTEPS = 6;
+    private double physicsRemainder;
     /** 当前观察地图的旧接口；实体业务应调用getWorldForEntity。 */
     public World box2DWorld;
     public TiledTileCollisionToBox2d tiledTileCollisionToBox2d;
@@ -96,8 +101,21 @@ public class B2dSystem extends BaseSystem {
     /** 提供全部物理环境供集中接触采样，调用方不得修改返回的注册表。 */
     public ObjectMap<String, World> getMapWorlds() { return mapWorlds; }
 
-    /** 静态非传感器几何改变后，仅失效所属图的导航缓存；原生Box2D直接编辑也可显式调用。 */
+    /** 读取指定图的静态几何版本；业务缓存按版本懒重建，不需要轮询全部身体。 */
+    public long getStaticGeometryRevision(String mapId) {
+        return geometryRevisions.get(getWorld(mapId), 0L);
+    }
+
+    /** 原生静态几何编辑完成后递增版本，并失效所属图导航；必须在主线程调用。 */
     public void staticGeometryChanged(World physics) {
+        staticGeometryChanged(physics, true);
+    }
+
+    /** 静态传感器也更新几何版本；只有实体碰撞改变才要求导航重建。 */
+    public void staticGeometryChanged(World physics, boolean affectsNavigation) {
+        if (physics == null) throw new IllegalArgumentException("Physics world cannot be null");
+        geometryRevisions.put(physics, geometryRevisions.get(physics, 0L) + 1);
+        if (!affectsNavigation) return;
         NavigationSystem navigation = world.getSystem(NavigationSystem.class);
         if (navigation == null) return;
         if (!isResidentMode()) { navigation.invalidate(); return; }
@@ -169,10 +187,31 @@ public class B2dSystem extends BaseSystem {
         staticGeometryChanged(physics);
     }
 
-    /** 每个地图以同一正常delta推进一次；不在按实体循环中重复step。 */
+    /** 全图共用60Hz物理时钟，每帧最多补六步；过长帧丢弃超出预算的物理时间。 */
     @Override protected void processSystem() {
-        if (mapWorlds.isEmpty()) box2DWorld.step(world.getDelta(), 6, 2);
-        else for (World physics : mapWorlds.values()) physics.step(world.getDelta(), 6, 2);
+        float delta = world.getDelta();
+        if (!Float.isFinite(delta) || delta < 0)
+            throw new IllegalArgumentException("Physics delta must be finite and non-negative");
+        physicsRemainder += Math.min((double) delta, PHYSICS_STEP * MAX_SUBSTEPS);
+        int steps = Math.min(MAX_SUBSTEPS, (int) ((physicsRemainder + 1e-9) / PHYSICS_STEP));
+        if (steps == 0) return;
+        physicsRemainder = Math.max(0, physicsRemainder - (double) steps * PHYSICS_STEP);
+        if (mapWorlds.isEmpty()) step(box2DWorld, steps);
+        else for (World physics : mapWorlds.values()) step(physics, steps);
+    }
+
+    /** 同帧补步共享已施加的力，完成后按World原有自动清力策略恢复。 */
+    private void step(World physics, int steps) {
+        boolean autoClear = physics.getAutoClearForces();
+        if (autoClear) physics.setAutoClearForces(false);
+        try {
+            for (int i = 0; i < steps; i++) physics.step((float) PHYSICS_STEP, 6, 2);
+        } finally {
+            if (autoClear) {
+                physics.clearForces();
+                physics.setAutoClearForces(true);
+            }
+        }
     }
 
     /** 显式物理结构事件只作用于指定地图，旧事件默认当前观察图。 */
@@ -192,6 +231,8 @@ public class B2dSystem extends BaseSystem {
         else for (World physics : mapWorlds.values()) physics.dispose();
         for (DefContactListener listener : contacts.values()) listener.clearContacts();
         contacts.clear();
+        geometryRevisions.clear();
+        physicsRemainder = 0;
         mapWorlds.clear(); tileColliders.clear(); tileCollider.clear(); box2DWorld = null;
     }
 }

@@ -451,6 +451,8 @@ EntityDatum snapshot = request.entityDatum;
 
 物理时间只由`B2dSystem.processSystem()`推进。`delTileCollider()`及`delAllCollider()`仅清理碰撞体，不额外执行物理步进；必须在接触回调之外、Box2D世界未锁定时调用。
 
+物理使用60Hz固定子步；全图共用余量与步数，每帧最多补6步（约100ms），更长帧只保留预算内时间，避免一次大步或无界补算。小于一步的时间累积到后续帧，零delta不步进；`WorldloomEngine.update`在执行系统前拒绝负值、NaN与无穷delta。其它业务与渲染仍每帧正常更新，不重复运行整个ECS。补步期间保留同帧施加的力，完成后恢复各World原有自动清力设置；连续控制优先在PRE_PHYSICS设置速度，短于物理步的帧不会单独触发接触结算。
+
 `B2dSystem` 根据 `PHY_LAYERS` 创建地图静态碰撞体，根据实体的 `B2dBody` 创建动态对象。Tiled 瓦片对象可通过 `FixDef` 类属性配置 Fixture：
 
 实体的 `B2dBody` 类属性负责 Body 本身：`defType` 选择 `StaticBody`、`KinematicBody` 或 `DynamicBody`，`defFixed` 控制固定旋转，`linearDamping` 设置线性阻尼。
@@ -866,6 +868,8 @@ events.dispatch(only);
 ```
 
 `RenderUISystem` 以 Table 的具体 `Class` 为键，同一类只能注册一个实例。`GET_TABLE` 派发后从 `event.table` 读取结果。
+
+`SHOW/HIDE/ONLY_SHOW`对缺失类型或未注册页面统一记录日志并保持现状，`ONLY_SHOW`先确认目标存在，不误隐藏其它页面。关闭世界后忽略迟到事件，`GET_TABLE`返回null；`act()`中关闭世界后不会再绘制已释放的舞台。会释放世界的按钮仍应延迟到事件结束执行；此保护不替代宿主的安全切屏约定。
 
 `UIStage` 是使用 Worldloom UI 尺寸和 FitViewport 的独立 Stage，可为特殊页面传入私有 zoom。主 ECS UI 则由 `RenderUISystem` 的 `ExtendViewport` 管理。
 
@@ -1420,8 +1424,8 @@ root
 多次变更合并为下次请求/更新时按地图及净空半径重建一次，未改变的地图继续复用缓存。
 
 若业务绕过`B2dBody`直接编辑原生Box2D静态夹具（包括active/type变化），编辑完成后调用
-`world.getSystem(B2dSystem.class).staticGeometryChanged(physicsWorld)`；也可明确调用
-`world.getSystem(NavigationSystem.class).invalidate(mapId)`。只应在主线程物理世界解锁时编辑。
+`world.getSystem(B2dSystem.class).staticGeometryChanged(physicsWorld)`，使导航和业务几何缓存共同失效。
+`getStaticGeometryRevision(mapId)`返回当前图的静态几何版本；业务保存采样时的版本，下次查询发现变化再重建，无需枚举全部Body。版本仅在当前世界有效，不写入存档；动态人物移动不递增。静态纯传感器同样递增几何版本，但不重建导航；原生仅编辑传感器时可调用`staticGeometryChanged(physicsWorld, false)`。单独调用`NavigationSystem.invalidate(mapId)`只清导航，不代表世界几何已改变。只应在主线程物理世界解锁时编辑。
 
 ## 22. Debuff系统
 
@@ -1508,7 +1512,7 @@ WorldloomConfig.builder()
     .build();
 ```
 
-一个Artemis World容纳所有正式图实体，`EntityFactory.BUILD_ALL`统一分配全部实体、恢复字段/身份/跨图引用，再恢复资源，最后激活状态机。每图独立Box2D World和导航缓存，每帧以相同正常delta步进一次；时钟、天气等全局系统只注册一次。`EnginePhase.PRE_PHYSICS`用于物理之前的全局决策，其它阶段保持原有顺序，不包含固定步长或离图补算。
+一个Artemis World容纳所有正式图实体，`EntityFactory.BUILD_ALL`统一分配全部实体、恢复字段/身份/跨图引用，再恢复资源，最后激活状态机。每图独立Box2D World和导航缓存，物理以同一个60Hz时钟及有界子步同步推进（见§9）；时钟、天气等全局系统只注册一次。`EnginePhase.PRE_PHYSICS`用于物理之前的全局决策，其它阶段保持原有顺序，不做离图补算。
 
 - `MapMembership.mapId/localTag/mapEpoch`表示当前地图、地图内名称及跨图代数；`PersistentIdentity.entityKey`是存档和网络身份。原`fromMap/mapObjectId`仍是素材来源，不能改成目的地图。
 - `MapIdentitySystem.resolve(key)`查稳定人物；`find(mapId, localTag)`查唯一局部锚点，重名有歧义返回-1；`sameMap(a,b)`用于空间行为预检。全局Tag仅为旧入口保留首个别名，不能用它定位不同房间的`PLAYER_POS`。

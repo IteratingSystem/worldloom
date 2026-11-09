@@ -30,8 +30,11 @@ public final class WorldloomEngine implements AutoCloseable {
         }
     }
 
+    /** 推进一次正常世界更新；零时间可初始化，负值和非有限时间在执行系统前拒绝。 */
     public void update(float delta) {
         requireActive();
+        if (!Float.isFinite(delta) || delta < 0)
+            throw new IllegalArgumentException("Engine delta must be finite and non-negative");
         world.setDelta(delta);
         world.process();
     }

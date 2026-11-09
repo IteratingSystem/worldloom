@@ -500,15 +500,14 @@ public class B2dBody extends SerializeComponent implements Disposable {
         invalidateNavigation();
     }
 
-    /** 自动维护静态实体的导航拓扑；动态身体和纯交互传感器不触发网格重建。 */
+    /** 静态身体变更递增几何版本；纯传感器不触发导航网格重建，动态身体不失效缓存。 */
     public void invalidateNavigation() {
         if (world == null || body == null || !body.isActive()
             || body.getType() != BodyDef.BodyType.StaticBody) return;
-        for (Fixture fixture : body.getFixtureList()) if (!fixture.isSensor()) {
-            B2dSystem physics = world.getSystem(B2dSystem.class);
-            if (physics != null) physics.staticGeometryChanged(b2dWorld);
-            return;
-        }
+        boolean solid = false;
+        for (Fixture fixture : body.getFixtureList()) if (!fixture.isSensor()) { solid = true; break; }
+        B2dSystem physics = world.getSystem(B2dSystem.class);
+        if (physics != null) physics.staticGeometryChanged(b2dWorld, solid);
     }
 
     @Override
