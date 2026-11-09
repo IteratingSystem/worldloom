@@ -51,6 +51,32 @@ public class EntitySerializer {
         }
     };
 
+    /** 将对象上的类属性映射为独立配置组件；不创建实体、不调用reload，只允许无实体引用的标量字段。 */
+    public static <T extends Component> T readComponent(Class<T> type, MapProperties properties) {
+        if (properties == null) return null;
+        try {
+            T result = type.getDeclaredConstructor().newInstance();
+            var keys = properties.getKeys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                Field field = findField(type, key);
+                if (field == null || !field.isAnnotationPresent(SerializeParam.class)
+                    || field.isAnnotationPresent(EntityReference.class))
+                    throw new IllegalArgumentException("Invalid configuration field: " + type.getSimpleName() + "." + key);
+                Class<?> valueType = field.getType();
+                if (!(valueType.isPrimitive() || valueType == String.class || valueType.isEnum()))
+                    throw new IllegalArgumentException("Configuration requires scalar fields: " + field);
+                Object value = properties.get(key);
+                if (value == null) continue;
+                field.setAccessible(true);
+                field.set(result, valueType.isEnum() ? restoreEnum(valueType, value) : coerceType(value, valueType));
+            }
+            return result;
+        } catch (ReflectiveOperationException | RuntimeException error) {
+            throw new IllegalArgumentException("Failed to read component configuration: " + type.getName(), error);
+        }
+    }
+
     /** 只转换对象实际挂载的组件，名称索引与字段元数据在加载期间复用。 */
     public static EntityData createEntityData(String mapName, MapObjects mapObjects){
         EntityData entityDateList = new EntityData();

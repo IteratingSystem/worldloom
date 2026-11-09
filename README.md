@@ -1601,6 +1601,10 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 
 同层多个区域分别判断，完整矩形必须落在同一个区域内，不自动将相邻区域拼为许可范围。建议公共地图默认禁止建造，游戏PlacementSystem先查询允许区，再查禁建区和地面/碰撞/距离等条件；不要让引擎硬编码BUILD之类的业务含义。
 
+4.15.0起，形状对象可以像实体对象一样挂载Tiled类属性，用`area.component(MyAreaConfig.class)`直接映射为独立配置组件，未挂载返回null。字段遵循`@SerializeParam`的标量/枚举契约，拒绝未知字段和实体引用；读取不创建ECS实体、不调用组件reload，运行态校验及计时由业务负责。类型默认值仍维护在propertytypes.json，地图加载器负责合并。返回对象可独立修改，不影响区域快照或后续读取。也可直接用`EntitySerializer.readComponent(type, mapProperties)`复用同一映射规则。
+
+`area.area()`返回实际平方像素面积，支持旋转矩形、凹/凸多边形、椭圆及胶囊；适合按瓦片面积计算种群密度。形状几何和配置读取都不依赖建造、刷怪等业务。示例：`var config = area.component(AreaSpawn.class); if (config != null) { /* 交给游戏生成规则 */ }`。
+
 ## 26. 绘制基础资源与阴影内部职责（4.12.0）
 
 - `RenderResources.createScreenQuad()`创建位置2维+UV2维的全屏四边形，按`GL_TRIANGLE_FAN`绘制；`createSoftMask(size, solidRadius)`创建白色径向软遮罩，半径占比范围`[0,1)`。每次返回独立GL资源，创建方在GL线程使用并释放；工厂不缓存资源，不接管AssetManager纹理。

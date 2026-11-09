@@ -16,11 +16,13 @@ public final class MapArea {
     private final boolean capsule;
     private final double segmentX, segmentY, capsuleRadius;
     private final Rectangle bounds;
+    private final com.badlogic.gdx.maps.MapProperties properties;
 
     /** 从已由TmxMapLoader翻转Y轴的对象复制几何，补上对象旋转和父图层偏移，不修改源对象。 */
     MapArea(String mapId, String layerName, MapObject object, float offsetX, float offsetY) {
         this.mapId = mapId;
         this.layerName = layerName;
+        properties = copyProperties(object.getProperties());
         name = object.getName() == null ? "" : object.getName();
         objectId = object.getProperties().get("id", -1, Integer.class);
         if (objectId < 1) throw new IllegalArgumentException("区域对象缺少有效编号：" + mapId + "/" + layerName);
@@ -99,6 +101,33 @@ public final class MapArea {
     public int objectId() { return objectId; }
     /** 返回包围矩形副本，调用方不能修改缓存中的区域。 */
     public Rectangle bounds() { return new Rectangle(bounds); }
+
+    /** 读取形状对象挂载的配置组件；缺失返回null，每次返回独立对象，不创建ECS实体或运行资源。 */
+    public <T extends com.artemis.Component> T component(Class<T> type) {
+        return org.worldloom.serialize.EntitySerializer.readComponent(type,
+            properties.get(type.getSimpleName(), null, com.badlogic.gdx.maps.MapProperties.class));
+    }
+
+    /** 返回实际形状的平方像素面积；密度计算不能以包围盒代替凹多边形或椭圆面积。 */
+    public double area() {
+        if (capsule) return Math.PI * capsuleRadius * capsuleRadius
+            + 4 * capsuleRadius * Math.hypot(segmentX, segmentY);
+        if (vertices == null) return Math.PI * radiusX * radiusY;
+        double sum = 0;
+        for (int i = 0, j = vertices.length - 2; i < vertices.length; j = i, i += 2)
+            sum += (double) vertices[j] * vertices[i + 1] - (double) vertices[i] * vertices[j + 1];
+        return Math.abs(sum) / 2;
+    }
+
+    /** 复制嵌套类属性，只保留配置快照，避免Tiled源对象修改污染已建立的区域索引。 */
+    private static com.badlogic.gdx.maps.MapProperties copyProperties(com.badlogic.gdx.maps.MapProperties source) {
+        var copy = new com.badlogic.gdx.maps.MapProperties();
+        source.getKeys().forEachRemaining(key -> {
+            Object value = source.get(key);
+            copy.put(key, value instanceof com.badlogic.gdx.maps.MapProperties nested ? copyProperties(nested) : value);
+        });
+        return copy;
+    }
 
     /** 判断源像素点是否位于区域内部或边界。 */
     public boolean contains(float x, float y) {
