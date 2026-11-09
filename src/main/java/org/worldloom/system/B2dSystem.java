@@ -33,6 +33,7 @@ public class B2dSystem extends BaseSystem {
     private static final double PHYSICS_STEP = 1.0 / 60;
     private static final int MAX_SUBSTEPS = 6;
     private double physicsRemainder;
+    private float lastStepSeconds;
     /** 当前观察地图的旧接口；实体业务应调用getWorldForEntity。 */
     public World box2DWorld;
     public TiledTileCollisionToBox2d tiledTileCollisionToBox2d;
@@ -105,6 +106,9 @@ public class B2dSystem extends BaseSystem {
     public long getStaticGeometryRevision(String mapId) {
         return geometryRevisions.get(getWorld(mapId), 0L);
     }
+
+    /** 本帧实际推进的物理秒数；物理之后的位移采样使用此值，不把渲染delta当物理时间。 */
+    public float getLastStepSeconds() { return lastStepSeconds; }
 
     /** 原生静态几何编辑完成后递增版本，并失效所属图导航；必须在主线程调用。 */
     public void staticGeometryChanged(World physics) {
@@ -194,6 +198,7 @@ public class B2dSystem extends BaseSystem {
             throw new IllegalArgumentException("Physics delta must be finite and non-negative");
         physicsRemainder += Math.min((double) delta, PHYSICS_STEP * MAX_SUBSTEPS);
         int steps = Math.min(MAX_SUBSTEPS, (int) ((physicsRemainder + 1e-9) / PHYSICS_STEP));
+        lastStepSeconds = (float) (steps * PHYSICS_STEP);
         if (steps == 0) return;
         physicsRemainder = Math.max(0, physicsRemainder - (double) steps * PHYSICS_STEP);
         if (mapWorlds.isEmpty()) step(box2DWorld, steps);
@@ -237,6 +242,7 @@ public class B2dSystem extends BaseSystem {
         contacts.clear();
         geometryRevisions.clear();
         physicsRemainder = 0;
+        lastStepSeconds = 0;
         mapWorlds.clear(); tileColliders.clear(); tileCollider.clear(); box2DWorld = null;
     }
 }

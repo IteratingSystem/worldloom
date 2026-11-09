@@ -455,6 +455,8 @@ EntityDatum snapshot = request.entityDatum;
 
 4.14.1起，导航在每个实际子步前使用实时Body位置与当前路径点再次限速，防止高刷新率或同帧多步越过近处路径点；此过程不重复推进状态机或重做A*。
 
+物理之后若根据真实位移统计训练/里程或检查速度，使用`B2dSystem.getLastStepSeconds()`读取该帧实际推进秒数；返回0表示尚未累积到一步。不要把一次固定子步的位移除以更短的渲染delta，否则高刷新率下会误判超速或减少训练收益。普通玩法计时仍使用世界delta。
+
 `B2dSystem` 根据 `PHY_LAYERS` 创建地图静态碰撞体，根据实体的 `B2dBody` 创建动态对象。Tiled 瓦片对象可通过 `FixDef` 类属性配置 Fixture：
 
 实体的 `B2dBody` 类属性负责 Body 本身：`defType` 选择 `StaticBody`、`KinematicBody` 或 `DynamicBody`，`defFixed` 控制固定旋转，`linearDamping` 设置线性阻尼。
