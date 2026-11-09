@@ -1,12 +1,14 @@
 jdk:
   - openjdk21
 install:
-  # 仅对Wrapper下载/启动预热重试，正式编译或检查失败直接结束，避免掩盖代码错误。
+  # 官方分发不可用时按序回退镜像；Wrapper始终校验官方SHA256，正式构建不重试。
   - |
-    for attempt in 1 2 3; do
-      if ./gradlew --no-daemon --version; then break; fi
-      if [ "$attempt" -eq 3 ]; then exit 1; fi
-      echo "Gradle bootstrap failed; retrying in 5 seconds ($attempt/3)."
-      sleep 5
+    wrapper=gradle/wrapper/gradle-wrapper.properties
+    archive=$(sed -n 's#^distributionUrl=.*/##p' "$wrapper")
+    ready=false
+    for base in https://services.gradle.org/distributions/ https://repo.huaweicloud.com/gradle/ https://mirrors.cloud.tencent.com/gradle/; do
+      sed -i "s#^distributionUrl=.*#distributionUrl=$base$archive#" "$wrapper"
+      if ./gradlew --no-daemon --version; then ready=true; break; fi
     done
+    if [ "$ready" != true ]; then exit 1; fi
     ./gradlew --no-daemon build publishToMavenLocal --console=plain
