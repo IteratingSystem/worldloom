@@ -1565,6 +1565,8 @@ WorldloomConfig.builder()
 自定义系统需要边界快照时可实现`SystemSnapshotLifecycle`，在`beforeSnapshot()`刷新公开`@SerializeParam` DTO字段，`afterSnapshotRestore()`登记恢复工作；后者发生时实体可能尚未分配，需等加载屏障结束后再解析稳定身份。系统复杂集合优先用明确DTO/LibGDX Array，不能把Property.value往返后的未定型数组直接赋给Java数组字段。
 
 
+JitPack通过仓库`jitpack.yml`显式运行`build publishToMavenLocal`，使用现有Maven publication，避免自动探测任务失败后向构建脚本注入重复publication。Wrapper下载超时为120秒，首次下载不依赖10秒内完成。
+
 ## 25. 地图区域对象层（4.11.0）
 
 业务通过应用配置明确登记区域层，与entityLayer/physicsLayers相同；不自动按名称扫描。AREA_xxx只是编辑命名建议，任意名称均可。同地图重复调用areaLayers会覆盖前值。
