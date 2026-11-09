@@ -1,6 +1,7 @@
 package org.worldloom.system;
 
 import com.artemis.annotations.All;
+import com.artemis.utils.IntBag;
 import com.artemis.annotations.Exclude;
 import com.artemis.systems.IteratingSystem;
 import com.badlogic.gdx.Gdx;
@@ -259,7 +260,34 @@ public class NavigationSystem extends IteratingSystem {
             && Float.isFinite(agent.stopDistance) && agent.stopDistance >= 0f;
     }
 
-    /** 按剩余距离限制本帧速度，避免越过路径点。 */
+    /** 实际物理子步前按实时Body位置限速，避免渲染帧与物理频率不同而越过路径点。 */
+    public void preparePhysicsStep(com.badlogic.gdx.physics.box2d.World physics, float seconds) {
+        if (!Float.isFinite(seconds) || seconds <= 0)
+            throw new IllegalArgumentException("Navigation physics step must be finite and positive");
+        IntBag ids = getSubscription().getEntities();
+        for (int i = 0; i < ids.size(); i++) {
+            int id = ids.get(i);
+            NavigationAgent agent = mNavigationAgent.get(id);
+            B2dBody component = mB2dBody.get(id);
+            Body body = component.body;
+            if (agent.status != NavigationStatus.MOVING || agent.nextWaypoint < 0 || agent.nextWaypoint >= agent.path.size
+                || body == null || body.getWorld() != physics || !body.isActive()) continue;
+            limitPhysicsMovement(body, agent.path.get(agent.nextWaypoint), seconds);
+        }
+    }
+
+    /** 只约束导航已给出的速度，不重跑行为树、寻路或角色状态，碰撞位置以物理体为准。 */
+    private void limitPhysicsMovement(Body body, Vector2 waypoint, float seconds) {
+        float dx = waypoint.x * worldScale - body.getPosition().x;
+        float dy = waypoint.y * worldScale - body.getPosition().y;
+        float distance = (float) Math.sqrt(dx * dx + dy * dy);
+        Vector2 velocity = body.getLinearVelocity();
+        float speed = velocity.len();
+        float maximum = distance / seconds;
+        if (speed > maximum) body.setLinearVelocity(velocity.x * maximum / speed, velocity.y * maximum / speed);
+    }
+
+    /** 按剩余距离给出导航速度，最终限速在实际物理子步前根据实时位置复核。 */
     private void moveTowards(Body body, Pos pos, Vector2 waypoint, float speed) {
         float dx = waypoint.x - pos.x;
         float dy = waypoint.y - pos.y;

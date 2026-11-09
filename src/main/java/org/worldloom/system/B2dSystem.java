@@ -205,7 +205,11 @@ public class B2dSystem extends BaseSystem {
         boolean autoClear = physics.getAutoClearForces();
         if (autoClear) physics.setAutoClearForces(false);
         try {
-            for (int i = 0; i < steps; i++) physics.step((float) PHYSICS_STEP, 6, 2);
+            NavigationSystem navigation = world.getSystem(NavigationSystem.class);
+            for (int i = 0; i < steps; i++) {
+                if (navigation != null) navigation.preparePhysicsStep(physics, (float) PHYSICS_STEP);
+                physics.step((float) PHYSICS_STEP, 6, 2);
+            }
         } finally {
             if (autoClear) {
                 physics.clearForces();

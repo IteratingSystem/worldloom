@@ -453,6 +453,8 @@ EntityDatum snapshot = request.entityDatum;
 
 物理使用60Hz固定子步；全图共用余量与步数，每帧最多补6步（约100ms），更长帧只保留预算内时间，避免一次大步或无界补算。小于一步的时间累积到后续帧，零delta不步进；`WorldloomEngine.update`在执行系统前拒绝负值、NaN与无穷delta。其它业务与渲染仍每帧正常更新，不重复运行整个ECS。补步期间保留同帧施加的力，完成后恢复各World原有自动清力设置；连续控制优先在PRE_PHYSICS设置速度，短于物理步的帧不会单独触发接触结算。
 
+4.14.1起，导航在每个实际子步前使用实时Body位置与当前路径点再次限速，防止高刷新率或同帧多步越过近处路径点；此过程不重复推进状态机或重做A*。
+
 `B2dSystem` 根据 `PHY_LAYERS` 创建地图静态碰撞体，根据实体的 `B2dBody` 创建动态对象。Tiled 瓦片对象可通过 `FixDef` 类属性配置 Fixture：
 
 实体的 `B2dBody` 类属性负责 Body 本身：`defType` 选择 `StaticBody`、`KinematicBody` 或 `DynamicBody`，`defFixed` 控制固定旋转，`linearDamping` 设置线性阻尼。
