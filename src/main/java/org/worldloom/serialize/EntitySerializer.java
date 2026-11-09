@@ -466,25 +466,37 @@ public class EntitySerializer {
         throw new IllegalArgumentException("Invalid enum value for " + type.getName() + ": " + value);
     }
 
-    /** 将Tiled及存档的标量转换为字段声明类型，转换失败交由恢复边界报告。 */
+    /** 严格转换标量：整数不得截断或溢出，浮点必须有限，布尔值只接受明确的真假或0/1。 */
     private static Object coerceType(Object value, Class<?> type) {
-        if (value == null || type.isInstance(value)) return value;
+        if (value == null) return null;
         if (value instanceof Number n) {
-            if (type == int.class || type == Integer.class) return n.intValue();
-            if (type == float.class || type == Float.class) return n.floatValue();
+            if (!Double.isFinite(n.doubleValue())) throw new IllegalArgumentException("Non-finite scalar");
+            if (type == float.class || type == Float.class) {
+                float result = n.floatValue();
+                if (!Float.isFinite(result)) throw new IllegalArgumentException("Float scalar overflow");
+                return result;
+            }
             if (type == double.class || type == Double.class) return n.doubleValue();
-            if (type == long.class || type == Long.class) return n.longValue();
-            if (type == short.class || type == Short.class) return n.shortValue();
-            if (type == byte.class || type == Byte.class) return n.byteValue();
-            if (type == boolean.class || type == Boolean.class) return n.intValue() != 0;
+            var exact = new java.math.BigDecimal(n.toString());
+            if (type == int.class || type == Integer.class) return exact.intValueExact();
+            if (type == long.class || type == Long.class) return exact.longValueExact();
+            if (type == short.class || type == Short.class) return exact.shortValueExact();
+            if (type == byte.class || type == Byte.class) return exact.byteValueExact();
+            if (type == boolean.class || type == Boolean.class) {
+                if (exact.compareTo(java.math.BigDecimal.ZERO) == 0) return false;
+                if (exact.compareTo(java.math.BigDecimal.ONE) == 0) return true;
+                throw new IllegalArgumentException("Boolean scalar requires zero or one");
+            }
         } else if (value instanceof String s) {
-            if (type == int.class || type == Integer.class) return Integer.parseInt(s);
-            if (type == float.class || type == Float.class) return Float.parseFloat(s);
-            if (type == double.class || type == Double.class) return Double.parseDouble(s);
-            if (type == long.class || type == Long.class) return Long.parseLong(s);
-            if (type == short.class || type == Short.class) return Short.parseShort(s);
-            if (type == byte.class || type == Byte.class) return Byte.parseByte(s);
-            if (type == boolean.class || type == Boolean.class) return Boolean.parseBoolean(s);
+            if (type == boolean.class || type == Boolean.class) {
+                if ("true".equalsIgnoreCase(s)) return true;
+                if ("false".equalsIgnoreCase(s)) return false;
+                throw new IllegalArgumentException("Invalid boolean scalar: " + s);
+            }
+            if (type == int.class || type == Integer.class || type == long.class || type == Long.class
+                || type == short.class || type == Short.class || type == byte.class || type == Byte.class
+                || type == float.class || type == Float.class || type == double.class || type == Double.class)
+                return coerceType(new java.math.BigDecimal(s), type);
         }
         return value;
     }
