@@ -10,6 +10,7 @@ import java.util.Map;
 public final class MapAreaSystem extends BaseSystem {
     private TiledMapSystem tiledMapSystem;
     private final Map<String,MapAreas> maps = new HashMap<>();
+    private final Map<String,MapAreas> shapes = new HashMap<>();
 
     /** 在玩法系统初始化前预加载明确登记的区域，配置错误尽早定位到地图与图层。 */
     @Override protected void initialize() {
@@ -23,6 +24,12 @@ public final class MapAreaSystem extends BaseSystem {
         return maps.computeIfAbsent(mapId,id->new MapAreas(id,tiledMapSystem.getTiledMap(id)));
     }
 
+    /** 查询任意对象层中的面积形状，按对象组件选择用途；每张运行图仅构建一次。 */
+    public MapAreas shapes(String mapId) {
+        Worldloom.config().requireRuntimeMap(mapId);
+        return shapes.computeIfAbsent(mapId, id -> MapAreas.fromShapes(id, tiledMapSystem.getTiledMap(id)));
+    }
+
     /** 按实体实际归属查询，供组件和跨地图系统共用。 */
     public MapAreas forEntity(int entityId) {
         return map(world.getSystem(MapIdentitySystem.class).getMapId(entityId));
@@ -32,5 +39,5 @@ public final class MapAreaSystem extends BaseSystem {
     @Override protected void processSystem() { }
 
     /** 世界关闭时释放索引，不持有跨会话地图资源。 */
-    @Override protected void dispose() { maps.clear(); }
+    @Override protected void dispose() { maps.clear(); shapes.clear(); }
 }

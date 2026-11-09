@@ -1569,6 +1569,8 @@ JitPack通过仓库`jitpack.yml`显式运行`build publishToMavenLocal`，使用
 
 ## 25. 地图区域对象层（4.11.0）
 
+4.16.0新增`MapAreaSystem.shapes(mapId)`：按需收集指定运行地图中**所有对象层**的矩形、椭圆、胶囊与凹/凸多边形，递归保留组偏移和对象旋转，无需`areaLayers`登记。用`shapes(mapId).all()`遍历，再以`area.component(MyAreaConfig.class)`筛出挂载业务组件的对象；未挂组件不具有该业务含义。自动模式跳过瓦片对象、点/折线/文本及无面积标记，不创建ECS实体。索引随World缓存及释放，隐藏层也参与。直接处理离线地图可用`MapAreas.fromShapes(mapId, tiledMap)`。原`map(mapId)`的显式登记与严格验证契约保留，现有业务可按需选择。
+
 业务通过应用配置明确登记区域层，与entityLayer/physicsLayers相同；不自动按名称扫描。AREA_xxx只是编辑命名建议，任意名称均可。同地图重复调用areaLayers会覆盖前值。
 
 ```java
