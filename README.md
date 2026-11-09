@@ -1627,3 +1627,11 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 观察图中的可绘制投影者按脚点稳定排序，同脚点保留订阅顺序；每帧脚点只取一次，复用排序槽位，将插入排序改为O(n log n)。仍保留本图屏外投影者，允许其阴影进入相机范围。点光继续沿用原投影路径。
 
 菜单可通过`GameSnapshotManager.hasSnapshot()`判断当前是否已建立会话，不触发初始化或修改。隔离试验页临时更换快照时必须在世界释放后恢复原快照；原本没有会话时使用已有`setNull()`清空临时管理器，不保存试验实体。
+
+## 27. 运行开销与配置边界（4.15.2）
+
+- `EntitySerializer.readComponent`与实体/系统字段恢复共用严格标量转换：整数拒绝小数截断及越界，浮点拒绝NaN、无穷及溢出；布尔仅接受Boolean、大小写无关的`true/false`或数值0/1。非法值在读取边界报告，不再静默采用另一数值。整数及数字字符串保留long边界精度。
+- `B2dSystem`在实际物理帧开始时调用一次`NavigationSystem.preparePhysicsFrame()`，按实时Body所属World建立移动者分组；每图每子步仅遍历本组。所有常驻地图仍正常步进，跨图后下个物理帧自动迁组，不暂停后台NPC。自定义物理循环须先调用`preparePhysicsFrame()`，再对各World的每个子步调用`preparePhysicsStep(physics, seconds)`；标准引擎入口自动完成。
+- `RenderPhysicsSystem`仅在DEBUG实际绘制时创建调试渲染器，并在退出世界时幂等释放；非调试会话不创建其GL资源。
+- `MapManager.animationIndex(tileset)`按图集对象身份缓存`TileAnimationIndex`，动作与帧形状描述只解析一次。`TileAnimations`通过`createAnimations(group)`取得独立播放实例；时间、随机状态、帧数组与时长数组相互隔离。`B2dBody`仍为每个实体独立创建Shape、Fixture及监听器，不再修改共享Tiled对象的FixDef动作/帧号。
+- 图集源数据及`frameShapes(group)`中的MapObject按只读约定使用。工具原位修改动作/碰撞元数据后调用`MapManager.invalidateAnimationIndex(tileset)`；随后创建或reload的组件使用新描述，现有播放实例不会被自动重置。`AssetManager.dispose()`清空目录，缓存不持有游戏World或实体；普通切图不必失效。

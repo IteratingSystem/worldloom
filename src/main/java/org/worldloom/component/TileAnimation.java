@@ -93,6 +93,17 @@ public class TileAnimation extends SerializeComponent {
         this.offsetY = offsetY;
     }
 
+    /** 从已解析描述复制独立播放实例；数组隔离以保留既有时长和帧数组修改接口的语义。 */
+    public TileAnimation copyPlayback() {
+        TileAnimation copy = new TileAnimation();
+        copy.name = name; copy.group = group; copy.playMode = playMode;
+        copy.offsetX = offsetX; copy.offsetY = offsetY;
+        copy.keyframes = keyframes == null ? null : keyframes.clone();
+        copy.frameDurations = frameDurations == null ? null : frameDurations.clone();
+        copy.totalDuration = totalDuration; copy.randomDuration = randomDuration;
+        return copy;
+    }
+
 
     /**
      * 判断送否是倒数第n帧之一

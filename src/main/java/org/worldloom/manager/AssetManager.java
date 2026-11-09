@@ -193,7 +193,7 @@ public class AssetManager {
      * 释放资源
      */
     public void dispose() {
-
+        org.worldloom.manager.map.MapManager.clearAnimationIndexes();
         if (gdxAssetManager != null) {
             gdxAssetManager.dispose();
         }

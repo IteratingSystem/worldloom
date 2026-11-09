@@ -2,7 +2,6 @@ package org.worldloom.component;
 
 import com.artemis.World;
 import com.badlogic.gdx.Gdx;
-import com.badlogic.gdx.graphics.g2d.Animation;
 import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.maps.MapProperties;
 import com.badlogic.gdx.maps.tiled.TiledMapTile;
@@ -15,7 +14,6 @@ import org.worldloom.manager.map.MapManager;
 import org.worldloom.serialize.SerializeParam;
 import org.worldloom.serialize.data.EntityDatum;
 
-import java.util.Iterator;
 
 /**
  * @Auther WenLong
@@ -28,40 +26,13 @@ public class TileAnimations extends SerializeComponent {
 
     @SerializeParam
     public String current;
+    /** 每次只建立独立播放实例，动作和帧碰撞目录由地图资源缓存统一解析。 */
     @Override
     public void reload(World world, EntityDatum entityDatum) {
         super.reload(world, entityDatum);
-        table = new ObjectMap<>();
-
-        MapManager mapManager = MapManager.getInstance();
-        TiledMapTileSet tileSet = mapManager.getTileSet(tiledMapTile);
-        String group = groupOf(tileSet, tiledMapTile);
-        Iterator<TiledMapTile> tileSetItr = tileSet.iterator();
-        while (tileSetItr.hasNext()){
-            TiledMapTile tile = tileSetItr.next();
-            if (!(tile instanceof AnimatedTiledMapTile animatedTile)){
-                continue;
-            }
-            MapProperties props = animatedTile.getProperties();
-            if (!props.containsKey("TileAnimation")) {
-                continue;
-            }
-            if (!group.equals(groupOf(props))) {
-                continue;
-            }
-            MapProperties animProp = props.get("TileAnimation",MapProperties.class);
-            String name = animProp.get("name", String.class);
-            String playMode = animProp.get("playMode", String.class);
-            float offsetX = animProp.get("offsetX", float.class);
-            float offsetY = animProp.get("offsetY", float.class);
-            TileAnimation tileAnimation = new TileAnimation();
-            tileAnimation.initialize(animatedTile, Animation.PlayMode.valueOf(playMode),offsetX,offsetY);
-            if (table.containsKey(name)){
-                Gdx.app.log(TAG,"Repetitive animation naming:"+name);
-                continue;
-            }
-            table.put(name,tileAnimation);
-        }
+        MapManager maps = MapManager.getInstance();
+        var index = maps.animationIndex(maps.getTileSet(tiledMapTile));
+        table = index.createAnimations(index.groupOf(tiledMapTile));
     }
 
     /**
@@ -82,27 +53,20 @@ public class TileAnimations extends SerializeComponent {
     /**
      * 解析实体所放置瓦片所属的角色分组：瓦片自带 TileAnimation 属性就取它的分组，
      * 否则在 tileset 里找把它当作动画帧的动画瓦片，取那一个的分组。
+     * 独立工具可直接查询而不初始化地图资源；运行时组件加载使用MapManager的缓存目录。
      *
      * @param tileSet 瓦片所在 tileset
      * @param tile    实体放置的瓦片，可为 null
      * @return 分组名，不分组为 ""
      */
     public static String groupOf(TiledMapTileSet tileSet, TiledMapTile tile) {
-        if (tile == null) {
-            return "";
-        }
-        if (tile.getProperties().containsKey("TileAnimation")) {
-            return groupOf(tile.getProperties());
-        }
+        if (tile == null) return "";
+        if (tile.getProperties().containsKey("TileAnimation")) return groupOf(tile.getProperties());
         for (TiledMapTile other : tileSet) {
-            if (!(other instanceof AnimatedTiledMapTile animated) || !animated.getProperties().containsKey("TileAnimation")) {
-                continue;
-            }
-            for (StaticTiledMapTile frame : animated.getFrameTiles()) {
-                if (frame.getId() == tile.getId()) {
-                    return groupOf(animated.getProperties());
-                }
-            }
+            if (!(other instanceof AnimatedTiledMapTile animated)
+                || !other.getProperties().containsKey("TileAnimation")) continue;
+            for (StaticTiledMapTile frame : animated.getFrameTiles())
+                if (frame.getId() == tile.getId()) return groupOf(other.getProperties());
         }
         return "";
     }

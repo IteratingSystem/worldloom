@@ -35,6 +35,19 @@ public class MapManager {
     //每张地图对应的实体数据，作为原型，地图加载时默认存在的所有实体，也就是新游戏时创建实体的依据
     private ObjectMap<String, EntityData> protoEntityData;
     private Bag<TiledMapTileSet> tileSets;
+    private final java.util.Map<TiledMapTileSet, org.worldloom.map.TileAnimationIndex> animationIndexes = new java.util.IdentityHashMap<>();
+
+    /** 缓存图集的动作与帧碰撞描述；纹理、图块和缓存共同归资源会话管理，不引用游戏World。 */
+    public org.worldloom.map.TileAnimationIndex animationIndex(TiledMapTileSet tiles) {
+        if (tiles == null) throw new IllegalArgumentException("Animation tileset is missing");
+        return animationIndexes.computeIfAbsent(tiles, org.worldloom.map.TileAnimationIndex::new);
+    }
+
+    /** 工具修改图集元数据后显式失效；已创建实体的播放状态不因此被重置。 */
+    public void invalidateAnimationIndex(TiledMapTileSet tiles) { animationIndexes.remove(tiles); }
+
+    /** 应用释放资源前清理解析目录，避免额外持有已销毁纹理和图集定义。 */
+    public static void clearAnimationIndexes() { if (instance != null) instance.animationIndexes.clear(); }
 
 
     private MapManager(ObjectMap<String, String> entityLayerNames,

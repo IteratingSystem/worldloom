@@ -3,14 +3,9 @@ package org.worldloom.component;
 import com.artemis.Entity;
 import com.artemis.utils.Bag;
 import com.badlogic.gdx.maps.MapObject;
-import com.badlogic.gdx.maps.MapObjects;
 import com.badlogic.gdx.maps.MapProperties;
 import com.badlogic.gdx.maps.objects.TextureMapObject;
-import com.badlogic.gdx.maps.tiled.TiledMapTile;
-import com.badlogic.gdx.maps.tiled.TiledMapTileSet;
 import com.badlogic.gdx.maps.tiled.objects.TiledMapTileMapObject;
-import com.badlogic.gdx.maps.tiled.tiles.AnimatedTiledMapTile;
-import com.badlogic.gdx.maps.tiled.tiles.StaticTiledMapTile;
 import com.badlogic.gdx.physics.box2d.*;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Disposable;
@@ -91,8 +86,9 @@ public class B2dBody extends SerializeComponent implements Disposable {
         }
 
 
-        MapObjects allObjects = new MapObjects();
-        MapObjects objects = tiledMapTile.getObjects();
+        java.util.List<org.worldloom.map.TileAnimationIndex.FrameShape> allObjects = new java.util.ArrayList<>();
+        for (MapObject object : tiledMapTile.getObjects())
+            allObjects.add(new org.worldloom.map.TileAnimationIndex.FrameShape(object, null, 0));
 
         B2dSystem b2dSystem = world.getSystem(B2dSystem.class);
         b2dWorld = b2dSystem.getWorldForEntity(entityId);
@@ -110,49 +106,10 @@ public class B2dBody extends SerializeComponent implements Disposable {
         body = b2dWorld.createBody(bodyDef);
         body.setLinearDamping(linearDamping);
 
-        //tiled原本的对象
-        for (MapObject object : objects) {
-            allObjects.add(object);
-        }
-
-        //动画帧中的形状对象
+        // 图集只解析一次；各实例仍独立创建Shape，不修改共享FixDef的动作名或帧号。
         MapManager mapManager = MapManager.getInstance();
-        TiledMapTileSet tileSet = mapManager.getTileSet(tiledMapTile);
-        String group = TileAnimations.groupOf(tileSet, tiledMapTile);
-        for (TiledMapTile aTile : tileSet) {
-            if (!(aTile instanceof AnimatedTiledMapTile animatedTile)) {
-                continue;
-            }
-            MapProperties allProps = animatedTile.getProperties();
-            if (!allProps.containsKey("TileAnimation")) {
-                continue;
-            }
-            MapProperties aniProp = allProps.get("TileAnimation", MapProperties.class);
-            if (!aniProp.containsKey("name")) {
-                continue;
-            }
-            if (!group.equals(TileAnimations.groupOf(allProps))) {
-                continue;
-            }
-
-            StaticTiledMapTile[] frameTiles = animatedTile.getFrameTiles();
-            String aniName = aniProp.get("name", "", String.class);
-            for (int i = 0; i < frameTiles.length; i++) {
-                StaticTiledMapTile frameTile = frameTiles[i];
-                MapObjects frameTileObjects = frameTile.getObjects();
-                for (MapObject frameTileObject : frameTileObjects) {
-                    MapProperties properties = frameTileObject.getProperties();
-                    if (!properties.containsKey("FixDef")) {
-                        continue;
-                    }
-                    MapProperties fixDefProps = properties.get("FixDef", MapProperties.class);
-                    fixDefProps.put("keyframeIndex", i);
-                    fixDefProps.put("aniName", aniName);
-                    allObjects.add(frameTileObject);
-                }
-            }
-
-        }
+        var animationIndex = mapManager.animationIndex(mapManager.getTileSet(tiledMapTile));
+        allObjects.addAll(animationIndex.frameShapes(animationIndex.groupOf(tiledMapTile)));
 
         float scaleWidth = 1;
         float scaleHeight = 1;
@@ -166,7 +123,8 @@ public class B2dBody extends SerializeComponent implements Disposable {
         scaleHeight = tileHeight/regionHeight;
 
         //将所有对象中是形状的转换成shape
-        for (MapObject object : allObjects) {
+        for (var source : allObjects) {
+            MapObject object = source.object();
             MapProperties shapeProps = object.getProperties();
             if (!shapeProps.containsKey("FixDef")) {
                 continue;
@@ -181,8 +139,8 @@ public class B2dBody extends SerializeComponent implements Disposable {
             String maskBits = fixDefProps.get("maskBits", String.class);
             String listenerSimpleName = fixDefProps.get("listenerSimpleName", String.class);
             // 帧动画数据
-            String aniName = fixDefProps.get("aniName","", String.class);
-            int keyframeIndex = fixDefProps.get("keyframeIndex",0, Integer.class);
+            String aniName = source.animation() == null ? fixDefProps.get("aniName","", String.class) : source.animation();
+            int keyframeIndex = source.animation() == null ? fixDefProps.get("keyframeIndex",0, Integer.class) : source.frame();
 
             // 创建监听器
             EcsContactListener ecsContactListener = null;
