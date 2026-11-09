@@ -20,6 +20,7 @@ public class ShapeUtils {
     public static Shape getShapeByMapObject (MapObject mapObject){
         return getShapeByMapObject(mapObject,1);
     }
+    /** 按世界比例创建独立形状；多边形顶点先复制，不能修改共享Tiled源数据。 */
     public static Shape getShapeByMapObject (MapObject mapObject,float worldScale){
         Shape shape = null;
         if (mapObject instanceof RectangleMapObject shapeObject){
@@ -65,12 +66,13 @@ public class ShapeUtils {
         }else if (mapObject instanceof PolygonMapObject shapeObject){
             Polygon polygon = shapeObject.getPolygon();
 
-            for (int i = 0; i < polygon.getVertices().length; i++) {
-                polygon.getVertices()[i]*=worldScale;
+            float[] vertices = polygon.getVertices().clone();
+            for (int i = 0; i < vertices.length; i++) {
+                vertices[i]*=worldScale;
             }
 
             PolygonShape polygonShape = new PolygonShape();
-            polygonShape.set(polygon.getVertices());
+            polygonShape.set(vertices);
             shape = polygonShape;
         }else if (mapObject instanceof PolylineMapObject shapeObject){
         }else {
@@ -78,6 +80,7 @@ public class ShapeUtils {
         }
         return shape;
     }
+    /** 为实体构造自己的形状，沿用现有各形状缩放规则且保持源多边形顶点只读。 */
     public static Shape getShapeByMapObject (MapObject mapObject,float worldScale,float scaleW,float scaleH){
         Shape shape = null;
         if (mapObject instanceof RectangleMapObject shapeObject){
@@ -127,12 +130,13 @@ public class ShapeUtils {
         }else if (mapObject instanceof PolygonMapObject shapeObject){
             Polygon polygon = shapeObject.getPolygon();
 
-            for (int i = 0; i < polygon.getVertices().length; i++) {
-                polygon.getVertices()[i]*=worldScale;
+            float[] vertices = polygon.getVertices().clone();
+            for (int i = 0; i < vertices.length; i++) {
+                vertices[i]*=worldScale;
             }
 
             PolygonShape polygonShape = new PolygonShape();
-            polygonShape.set(polygon.getVertices());
+            polygonShape.set(vertices);
             shape = polygonShape;
         }else if (mapObject instanceof PolylineMapObject shapeObject){
         }else {

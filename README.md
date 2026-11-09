@@ -1637,3 +1637,5 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 - 图集源数据及`frameShapes(group)`中的MapObject按只读约定使用。工具原位修改动作/碰撞元数据后调用`MapManager.invalidateAnimationIndex(tileset)`；随后创建或reload的组件使用新描述，现有播放实例不会被自动重置。`AssetManager.dispose()`清空目录，缓存不持有游戏World或实体；普通切图不必失效。
 
 发布补充（4.15.4）：JitPack先预热Wrapper，官方分发下载失败时依次回退华为云、腾讯镜像（仅改远程临时构建副本的URL），最多三个源；Wrapper始终以`distributionSha256Sum`校验Gradle官方公布的SHA256。正式build/publish只执行一次，编译和检查失败直接报告。4.15.2/4.15.3均在官方Gradle分发下载处遇HTTP 504，未执行代码编译；不移动旧标签，使用后续修订发布。本地默认仍用官方分发URL。
+
+形状隔离补充（4.15.5）：`ShapeUtils.getShapeByMapObject`两个缩放入口先复制多边形顶点，再创建原生形状；重复实例化同一图块不再累乘修改源顶点。调用方仍负责释放返回的Shape，既有形状缩放规则不变。
