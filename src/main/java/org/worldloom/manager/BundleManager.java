@@ -45,4 +45,11 @@ public class BundleManager {
     public static String get(String key){
         return getBundle().get(key);
     }
+
+    /** 资源容器释放时清除借用引用，防止重建前继续使用旧容器切换语言。 */
+    static void clearCache() {
+        bundle = null;
+        assetManager = null;
+        path = null;
+    }
 }

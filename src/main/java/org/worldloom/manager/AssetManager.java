@@ -19,6 +19,7 @@ import org.worldloom.loader.InkStoryLoader;
 import org.worldloom.audio.AudioAssetPath;
 import org.worldloom.Worldloom;
 import java.util.ArrayList;
+import java.util.Objects;
 
 
 /**
@@ -36,22 +37,23 @@ public class AssetManager {
     public static final String SOUND_DIR = AudioAssetPath.SOUND_DIRECTORY;
     public static final String MUSIC_DIR = AudioAssetPath.MUSIC_DIRECTORY;
     private static AssetManager instance;
-    private static FileHandleResolver resolver;
-    /** Canonical manifest snapshot shared by loading, discovery and shader/part indexes. */
+    private final FileHandleResolver resolver = new InternalFileHandleResolver();
+    /** 加载、资源发现及图集索引共享的资源清单快照。 */
     public String[] assetPathList = new String[0];
-    private static com.badlogic.gdx.assets.AssetManager gdxAssetManager;
-    private boolean loadersRegistered;
+    private final ManagedAssets gdxAssetManager;
+    private boolean disposed;
 
+    /** 读取资源清单；成功后创建资源容器，地图类型文件延迟至请求地图加载器时读取。 */
     private AssetManager() {
-        // 私有构造器，防止外部直接实例化
         FileHandle assetsHandle = Gdx.files.internal("assets.txt");
         if (!assetsHandle.exists()) {
-            Gdx.app.error(TAG,"assets.txt is not exists!");
-            return;
+            throw new IllegalStateException("Asset manifest does not exist: assets.txt");
         }
         assetPathList = parseAssetPaths(assetsHandle.readString());
+        gdxAssetManager = new ManagedAssets(resolver);
     }
 
+    /** 规范化清单换行、BOM及路径分隔符，跳过空行。 */
     private static String[] parseAssetPaths(String manifest) {
         ArrayList<String> paths = new ArrayList<>();
         for (String line : manifest.split("\\R")) {
@@ -62,11 +64,6 @@ public class AssetManager {
         }
         return paths.toArray(String[]::new);
     }
-    private static void initialize(){
-        resolver = new InternalFileHandleResolver();
-        instance = new AssetManager();
-        gdxAssetManager = new com.badlogic.gdx.assets.AssetManager(resolver);
-    }
 
     /**
      * 获取单例实例
@@ -74,34 +71,36 @@ public class AssetManager {
      */
     public static AssetManager getInstance() {
         if (instance == null) {
-            initialize();
+            instance = new AssetManager();
         }
         return instance;
     }
 
 
-    /** 显式注册引擎加载器，保留旧接入方式；新项目只需配置WorldloomConfig的类型路径。 */
+    /**
+     * 兼容旧入口：设置地图类型来源，同路径重复调用无副作用，不覆盖自定义加载器。
+     * 默认地图加载器已创建后禁止更换来源；新项目使用WorldloomConfig配置路径。
+     */
+    @Deprecated(since = "4.19.1")
     public void setLoaders(String propTypePath) {
-        gdxAssetManager.setLoader(TiledMap.class, new EcsMapLoader(resolver,propTypePath));
-        gdxAssetManager.setLoader(BehaviorTree.class, new BehaviorTreeLoader(resolver));
-        gdxAssetManager.setLoader(Story.class, new InkStoryLoader(resolver));
-        loadersRegistered = true;
+        ensureActive();
+        gdxAssetManager.configurePropertyTypes(propTypePath);
     }
 
-    /** 首次实际加载前安装默认加载器，避免业务页面遗漏注册，也不在配置阶段读取文件。 */
-    private void ensureLoaders() {
-        if (!loadersRegistered) setLoaders(Worldloom.config().getTiledPropertyTypesPath());
+    /** 已释放的旧句柄明确失败，避免它访问后来创建的新资源容器。 */
+    private void ensureActive() {
+        if (disposed) throw new IllegalStateException("AssetManager has been disposed");
     }
 
-    /** 先安装引擎默认加载器再应用业务覆盖，后续批量加载不会覆盖调用方的选择。 */
+    /** 显式安装业务加载器；按需默认注册只填空缺，不覆盖业务选择。 */
     public <T, P extends AssetLoaderParameters<T>> void setLoader(Class<T> type, AssetLoader<T, P> loader) {
-        ensureLoaders();
+        ensureActive();
         gdxAssetManager.setLoader(type,loader);
     }
 
-    /** 返回已安装引擎默认加载器的底层管理器，直接加载也遵循相同接入规则。 */
+    /** 返回借用的底层容器；直接加载及依赖加载同样按资源类型延迟注册，不应由调用方释放。 */
     public com.badlogic.gdx.assets.AssetManager getGdxAssetManager(){
-        ensureLoaders();
+        ensureActive();
         return gdxAssetManager;
     }
 
@@ -112,7 +111,7 @@ public class AssetManager {
      * @param <T>
      */
     public <T> void loadAsset(String path, Class<T> aClass) {
-        ensureLoaders();
+        ensureActive();
         gdxAssetManager.load(path, aClass);
     }
 
@@ -122,7 +121,7 @@ public class AssetManager {
      * 依赖于assets模块中的assets.txt
      */
     public void loadAssets() {
-        ensureLoaders();
+        ensureActive();
         for (String path : assetPathList) {
             if (path.startsWith(SOUND_DIR) && isAudioPath(path)) {
                 loadAsset(path, Sound.class);
@@ -155,6 +154,7 @@ public class AssetManager {
         }
     }
 
+    /** 判断受支持的音频扩展名。 */
     private boolean isAudioPath(String path) {
         String lowerPath = path.toLowerCase();
         return lowerPath.endsWith(".ogg") || lowerPath.endsWith(".wav")
@@ -170,6 +170,7 @@ public class AssetManager {
      * @param <T>
      */
     public <T> T getObejct(String path,Class<T> aClass) {
+        ensureActive();
         return gdxAssetManager.get(path, aClass);
     }
 
@@ -180,6 +181,7 @@ public class AssetManager {
      * @param <T>
      */
     public <T> ObjectMap<String, T> getObjects(String ext,Class<T> aClass) {
+        ensureActive();
         ObjectMap<String, T> objectMap = new ObjectMap<>();
         FileHandle fileHandle;
         for (String path : assetPathList) {
@@ -199,19 +201,72 @@ public class AssetManager {
     }
 
 
+    /** 在主线程推进资源队列。 */
     public void update(){
+        ensureActive();
         gdxAssetManager.update();
     }
+    /** 返回当前资源加载进度。 */
     public float getProgress(){
+        ensureActive();
         return gdxAssetManager.getProgress();
     }
-    /**
-     * 释放资源
-     */
+    /** 幂等释放本实例资源并清除借用缓存；下次获取单例时创建独立的新容器。 */
     public void dispose() {
+        if (disposed) return;
+        disposed = true;
         org.worldloom.manager.map.MapManager.clearAnimationIndexes();
-        if (gdxAssetManager != null) {
+        SkinManager.clearCache();
+        BundleManager.clearCache();
+        if (instance == this) instance = null;
+        try {
             gdxAssetManager.dispose();
+        } finally {
+            assetPathList = new String[0];
+        }
+    }
+
+    /** 在原生查询入口补默认加载器，覆盖直接load及依赖加载，不为皮肤或图片预读地图配置。 */
+    private static final class ManagedAssets extends com.badlogic.gdx.assets.AssetManager {
+        private String propertyTypesPath;
+        private String initializedTypesPath;
+        private boolean disposed;
+
+        /** 保留LibGDX自带加载器，额外的引擎加载器按类型首次查询时创建。 */
+        ManagedAssets(FileHandleResolver resolver) { super(resolver); }
+
+        /** 固定默认地图加载器的来源；重复配置不覆盖任何已有加载器。 */
+        synchronized void configurePropertyTypes(String path) {
+            Objects.requireNonNull(path, "Tiled property type path cannot be null");
+            if (path.isBlank()) throw new IllegalArgumentException("Tiled property type path cannot be blank");
+            if (initializedTypesPath != null && !initializedTypesPath.equals(path))
+                throw new IllegalStateException("Tiled property type source is already initialized: " + initializedTypesPath);
+            propertyTypesPath = path;
+        }
+
+        /** 先尊重包括后缀在内的自定义加载器，仅在目标类型缺省时创建对应引擎加载器。 */
+        @Override public synchronized <T> AssetLoader getLoader(Class<T> type, String fileName) {
+            if (disposed) throw new IllegalStateException("AssetManager has been disposed");
+            AssetLoader loader = super.getLoader(type, fileName);
+            if (loader != null) return loader;
+            if (type == TiledMap.class) {
+                String path = propertyTypesPath == null ? Worldloom.config().getTiledPropertyTypesPath() : propertyTypesPath;
+                EcsMapLoader maps = new EcsMapLoader(getFileHandleResolver(), path);
+                super.setLoader(TiledMap.class, maps);
+                initializedTypesPath = path;
+            } else if (type == BehaviorTree.class) {
+                super.setLoader(BehaviorTree.class, new BehaviorTreeLoader(getFileHandleResolver()));
+            } else if (type == Story.class) {
+                super.setLoader(Story.class, new InkStoryLoader(getFileHandleResolver()));
+            }
+            return super.getLoader(type, fileName);
+        }
+
+        /** 底层容器也只释放一次；清理排队任务期间仍允许原生查询已注册加载器。 */
+        @Override public synchronized void dispose() {
+            if (disposed) return;
+            try { super.dispose(); }
+            finally { disposed = true; }
         }
     }
 }

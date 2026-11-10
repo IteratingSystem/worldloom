@@ -118,9 +118,13 @@ assets.update();
 float progress = assets.getProgress();
 ```
 
-4.18.0起，资源入口按`WorldloomConfig.tiledPropertyTypes(path)`自动注册TMX、行为树和Ink加载器，无需业务页面调用`setLoaders`。类型文件路径默认`propertytypes.json`，例如Island配置为`tiled/propertytypes.json`；构建配置只记录路径，首次`loadAssets`、`loadAsset`或`getGdxAssetManager`才读取类型并注册。缺文件/坏类型直接报错，不回退到普通TMX加载器。原`setLoaders(path)`仍可显式调用；`setLoader(type, customLoader)`先安装默认值再应用覆盖，后续加载不会重复覆盖业务选择。直接创建原生LibGDX AssetManager不属于此自动接入入口。
+4.18.0起，无需业务页面调用`setLoaders`。4.19.1起，在底层资源容器的`getLoader(type, fileName)`查询入口按类型补齐TMX、行为树和Ink加载器，直接加载与依赖加载使用同一规则；已有加载器（包括后缀专用加载器）优先，不会被自动注册覆盖。读取皮肤、图片或仅获取`getGdxAssetManager()`不会初始化地图加载器；首次请求TiledMap加载器时才从`WorldloomConfig.tiledPropertyTypes(path)`取路径并读取类型文件。路径默认`propertytypes.json`，例如Island为`tiled/propertytypes.json`。缺文件/坏类型仍明确报错，不回退到普通TMX加载器。直接创建原生LibGDX AssetManager不属于此自动接入入口。
 
-4.19.0起，默认值解析、嵌套类递归及覆盖合并也交给LibGDX原生逻辑，类型索引在加载器内只初始化一次。`propertytypes.json`仍是默认值的数据来源：`TiledPropertySource`只在内存中把独立数组包装为原生需要的`propertyTypes`项目结构，不写文件，不另维护默认值副本；路径也可直接指向已有`.tiled-project`。文件读取边界仅映射类名/成员名来补空类及保留未知字段，运行加载不再使用旧`Member`的逐类型默认值转换。
+旧`setLoaders(path)`已弃用，仅为兼容设置类型路径；同路径重复调用无副作用，不会覆盖任何业务加载器，默认地图加载器创建后禁止更换来源。业务仍可通过`setLoader(type, customLoader)`显式覆盖。底层容器是借用对象，统一由引擎AssetManager释放：dispose幂等清理Skin/Bundle借用缓存并脱离单例；旧句柄后续操作报错，下次getInstance创建独立容器。旧实例重复dispose不会释放新容器。
+
+4.19.0起，默认值解析、嵌套类递归及标量转换交给LibGDX原生逻辑，类型索引在加载器内只初始化一次。`propertytypes.json`仍是默认值的数据来源：`TiledPropertySource`只在内存中把独立数组包装为原生需要的`propertyTypes`项目结构，不写文件，不另维护默认值副本；路径也可直接指向已有`.tiled-project`。文件读取边界只索引类型/成员名称并校验唯一性来补空类及保留未知字段。旧`Member`、`PropertyType`已弃用，仅留外部源码兼容，运行加载及内部类型检查不再依赖旧转换器。
+
+4.19.1补齐原生的嵌套局部合并边界：如Child.power默认3、Parent.child.power默认9，地图仅覆盖child.enabled时，power仍为9。适配器临时叠加当前上下文默认值，再交原生转换；XML覆盖及JSON多层默认都保留未修改的字段，数组/标量整体替换。每次调用后恢复缓存定义，不让兄弟实例互相影响，不为此增加业务组件的复杂字段。
 
 `EcsMapLoader`仍保留空标记类、严格组件字段契约、胶囊及旧XML list扩展：原生1.14.2会跳过空类、丢弃类内未知字段并添加`type`元数据。适配器补回空类，移除元信息后让原生恢复真实同名type字段；未知属性原值留到组件映射边界报错。覆盖值查找限定当前类的直接成员，修正原生递归查找把子类同名值套到父类的问题；颜色等可变默认值由原生为每份配置独立创建。业务组件字段仍遵循标量/枚举契约。
 

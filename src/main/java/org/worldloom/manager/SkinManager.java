@@ -31,4 +31,7 @@ public class SkinManager {
             texture.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
         }
     }
+
+    /** 清除借用引用；Skin及其纹理由资源管理器统一释放，不能在此重复dispose。 */
+    static void clearCache() { skin = null; }
 }

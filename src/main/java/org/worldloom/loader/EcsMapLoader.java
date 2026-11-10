@@ -18,6 +18,8 @@ import org.worldloom.map.CapsuleMapObject;
 public class EcsMapLoader extends TmxMapLoader {
     private final TiledPropertySource propertySource;
     private boolean projectLoaded;
+    private Array<ProjectClassMember> activeMembers;
+    private static final JsonValue NO_OVERRIDES = new JsonValue(JsonValue.ValueType.object);
 
     /** 保存独立类型文件的内存项目视图；默认值由首次加载地图时的原生项目解析处理。 */
     public EcsMapLoader(FileHandleResolver resolver, String propTypePath) {
@@ -70,16 +72,78 @@ public class EcsMapLoader extends TmxMapLoader {
     protected void loadClassProperties(String className, MapProperties properties, XmlReader.Element element) {
         properties.remove("type");
         XmlReader.Element values = propertyValues(element);
-        super.loadClassProperties(className, properties, values);
-        var declared = propertySource.index.members.get(className);
-        if (values != null) for (XmlReader.Element property : values.getChildrenByName("property"))
-            if (!declared.contains(property.getAttribute("name"))) loadExtraProperty(properties, property);
+        JsonValue inherited = null;
+        if (activeMembers != null && element != null && "property".equals(element.getName()))
+            // 原生正在迭代父类数组，必须用索引访问，不能触发LibGDX复用迭代器的嵌套失效。
+            for (int i = 0; i < activeMembers.size; i++) {
+                ProjectClassMember member = activeMembers.get(i);
+                if (member.name.equals(element.getAttribute("name")) && "class".equals(member.type))
+                    inherited = member.defaultValue;
+            }
+        Array<ProjectClassMember> original = projectClassInfo.get(className), parent = activeMembers;
+        activeMembers = membersWithDefaults(className, inherited);
+        if (activeMembers != null) projectClassInfo.put(className, activeMembers);
+        try {
+            super.loadClassProperties(className, properties, values);
+            var declared = propertySource.index.members.get(className);
+            if (values != null) for (XmlReader.Element property : values.getChildrenByName("property"))
+                if (!declared.contains(property.getAttribute("name"))) loadExtraProperty(properties, property);
+        } finally {
+            activeMembers = parent;
+            if (original != null) projectClassInfo.put(className, original);
+        }
     }
 
     /** 嵌套类的纯默认值也由原生递归读取，元信息不进入业务字段。 */
     @Override protected void loadJsonClassProperties(String className, MapProperties properties, JsonValue values) {
         properties.remove("type");
-        super.loadJsonClassProperties(className, properties, values);
+        Array<ProjectClassMember> original = projectClassInfo.get(className), parent = activeMembers;
+        activeMembers = membersWithDefaults(className, values);
+        if (activeMembers != null) projectClassInfo.put(className, activeMembers);
+        try {
+            super.loadJsonClassProperties(className, properties, NO_OVERRIDES);
+        } finally {
+            activeMembers = parent;
+            if (original != null) projectClassInfo.put(className, original);
+        }
+    }
+
+    /** 只为有局部覆盖的类构建临时默认值视图，不修改缓存定义，标量转换仍由原生完成。 */
+    private Array<ProjectClassMember> membersWithDefaults(String className, JsonValue overrides) {
+        Array<ProjectClassMember> members = projectClassInfo.get(className);
+        if (members == null || overrides == null) return members;
+        if (!overrides.isObject()) throw new GdxRuntimeException("Tiled class defaults must be an object: " + className);
+        if (overrides.isEmpty()) return members;
+        Array<ProjectClassMember> result = new Array<>(members.size);
+        for (int i = 0; i < members.size; i++) {
+            ProjectClassMember member = members.get(i);
+            JsonValue value = overrides.get(member.name);
+            result.add(value == null ? member : new DefaultMember(member, mergeDefaults(member.defaultValue, value)));
+        }
+        return result;
+    }
+
+    /** 递归保留未覆盖的嵌套字段，复制对象节点以免串改共享默认值；数组和标量整体覆盖。 */
+    private static JsonValue mergeDefaults(JsonValue base, JsonValue overrides) {
+        if (base == null || !base.isObject() || !overrides.isObject()) return overrides;
+        JsonValue result = new JsonValue(base);
+        for (JsonValue field : overrides) {
+            JsonValue merged = mergeDefaults(result.get(field.name), field);
+            result.remove(field.name);
+            result.addChild(field.name, new JsonValue(merged));
+        }
+        return result;
+    }
+
+    /** 原生字段描述的临时视图，仅替换默认值，不实现另一套属性转换。 */
+    private static final class DefaultMember extends ProjectClassMember {
+        /** 保留声明名称与类型，使用本次嵌套上下文合并后的默认值。 */
+        DefaultMember(ProjectClassMember source, JsonValue value) {
+            name = source.name;
+            type = source.type;
+            propertyType = source.propertyType;
+            defaultValue = value;
+        }
     }
 
     /** 仅在当前类的直接成员中查覆盖，防原生递归查找把子类同名字段套到父类上。 */

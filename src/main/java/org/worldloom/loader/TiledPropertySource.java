@@ -39,10 +39,13 @@ final class TiledPropertySource extends FileHandle {
             if (definitions == null || !definitions.isArray())
                 throw new IllegalArgumentException("Tiled propertyTypes must be an array");
             ObjectSet<String> names = new ObjectSet<>();
+            ObjectSet<Integer> ids = new ObjectSet<>();
             for (JsonValue definition : definitions) {
                 String name = definition.getString("name", "");
                 if (name.isBlank() || !names.add(name))
                     throw new IllegalArgumentException("Invalid or duplicate Tiled property type: " + name);
+                if (definition.has("id") && !ids.add(definition.getInt("id")))
+                    throw new IllegalArgumentException("Duplicate Tiled property type id: " + definition.getInt("id"));
                 if (!"class".equals(definition.getString("type", ""))) continue;
                 JsonValue fields = definition.get("members");
                 if (fields == null || !fields.isArray())

@@ -9,8 +9,10 @@ import com.badlogic.gdx.utils.JsonValue;
 /**
  * @Auther WenLong
  * @Date 2025/1/22 10:43
- * @Description Tiled自定义属性(类)中描述每个子属性的基本属性
+ * @Description 旧版Tiled字段转换模型，仅为外部源码兼容保留；正式地图加载不使用此转换器。
+ * @deprecated 默认值应由EcsMapLoader交给LibGDX处理，不要在新代码中直接读取此模型。
  **/
+@Deprecated(since = "4.19.1")
 public class Member implements Json.Serializable {
     private final static String TAG = Member.class.getSimpleName();
 
