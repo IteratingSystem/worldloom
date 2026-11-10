@@ -11,12 +11,14 @@ import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.IntConsumer;
 
 /** 主线程维护人物稳定身份与地图局部名称索引，跨门后显式刷新。 */
 public final class MapIdentitySystem extends BaseEntitySystem {
     private final Map<String, Integer> identities = new HashMap<>();
     private final Map<String, Map<String, Set<Integer>>> localNames = new HashMap<>();
     private final Map<Integer, Binding> bindings = new HashMap<>();
+    private final Set<IntConsumer> listeners = new LinkedHashSet<>();
 
     /** 保存已登记字段，移除旧索引时不读取已经变更的组件。 */
     private record Binding(String entityKey, String mapId, String localTag) { }
@@ -91,28 +93,52 @@ public final class MapIdentitySystem extends BaseEntitySystem {
         Binding next = new Binding(identity.entityKey, membership.mapId,
             membership.localTag == null ? "" : membership.localTag);
         if (next.equals(bindings.get(entityId))) return;
-        forget(entityId);
+        unbind(entityId);
         identities.put(next.entityKey(), entityId);
         bindings.put(entityId, next);
         if (!next.localTag().isBlank()) {
             localNames.computeIfAbsent(next.mapId(), ignored -> new HashMap<>())
                 .computeIfAbsent(next.localTag(), ignored -> new LinkedHashSet<>()).add(entityId);
         }
+        notifyChanged(entityId);
     }
 
     /** 真实销毁时移除索引，支持尚未收到Artemis删除通知的安全点清理。 */
     public void forget(int entityId) {
+        if (unbind(entityId)) notifyChanged(entityId);
+    }
+
+    /** 内部先移除旧绑定，刷新操作仅在完整的新绑定提交后通知一次。 */
+    private boolean unbind(int entityId) {
         Binding old = bindings.remove(entityId);
-        if (old == null) return;
+        if (old == null) return false;
         identities.remove(old.entityKey(), entityId);
         Map<String, Set<Integer>> names = localNames.get(old.mapId());
-        if (names == null) return;
+        if (names == null) return true;
         Set<Integer> ids = names.get(old.localTag());
         if (ids != null) {
             ids.remove(entityId);
             if (ids.isEmpty()) names.remove(old.localTag());
         }
         if (names.isEmpty()) localNames.remove(old.mapId());
+        return true;
+    }
+
+    /** 主线程订阅身份或地图绑定变更；回调看到提交后的索引，注销时resolve返回-1，不回放既有实体。 */
+    public void addListener(IntConsumer listener) { listeners.add(java.util.Objects.requireNonNull(listener)); }
+
+    /** 所属玩法缓存销毁时解除订阅；监听器不属于存档数据。 */
+    public void removeListener(IntConsumer listener) { listeners.remove(listener); }
+
+    /** 变更频率远低于查询；通知快照允许回调自行退订，监听失败不回滚已提交的身份。 */
+    private void notifyChanged(int entityId) {
+        for (IntConsumer listener : java.util.List.copyOf(listeners)) {
+            try { listener.accept(entityId); }
+            catch (RuntimeException error) {
+                if (com.badlogic.gdx.Gdx.app != null) com.badlogic.gdx.Gdx.app.error("MapIdentitySystem", "Identity listener failed: " + entityId, error);
+                else System.err.println("Identity listener failed: " + entityId + ": " + error);
+            }
+        }
     }
 
     /** 接入Artemis延迟插入通知，和构建阶段的显式登记保持幂等。 */
@@ -129,5 +155,6 @@ public final class MapIdentitySystem extends BaseEntitySystem {
         identities.clear();
         localNames.clear();
         bindings.clear();
+        listeners.clear();
     }
 }

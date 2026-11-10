@@ -1520,6 +1520,7 @@ WorldloomConfig.builder()
 
 - `MapMembership.mapId/localTag/mapEpoch`表示当前地图、地图内名称及跨图代数；`PersistentIdentity.entityKey`是存档和网络身份。原`fromMap/mapObjectId`仍是素材来源，不能改成目的地图。
 - `MapIdentitySystem.resolve(key)`查稳定人物；`find(mapId, localTag)`查唯一局部锚点，重名有歧义返回-1；`sameMap(a,b)`用于空间行为预检。全局Tag仅为旧入口保留首个别名，不能用它定位不同房间的`PLAYER_POS`。
+- 需要维护按地图分桶的玩法索引时，用`addListener(IntConsumer)`订阅实体身份/地图/局部名绑定变化，回调参数为运行期实体编号。通知同步发生在新绑定完整提交后；注销时`resolve(key)`已返回-1，重复refresh不通知，不回放已有实体。先枚举已有订阅建立索引，创建后新增玩法组件仍须显式登记；普通Pos/缩放/可见性变化继续在查询时读取。销毁玩法缓存时`removeListener`退订，不保存监听器或实体编号；回调可自行退订，异常记录后继续其它监听，不回滚身份。
 - 动态生成调用`EntitySerializer.buildEntity(world, datum, mapId)`，分配新身份并清模板局部名称；网络/存档恢复单实体用`restoreEntity(world, datum, mapId)`保留身份。常驻模式禁止缺少出生地图的旧动态入口；不要用本机观察图代替生成物所属图。
 - `B2dSystem.getWorld(mapId)`及`getWorldForEntity(id)`用于射线、查询和Joint；旧`box2DWorld`只是观察图适配。接触、AI范围、交互先限定实体地图，地图局部坐标不可直接跨图比较。
 - `MapTransitionSystem.transfer(id, targetMap, x, y)`在世界解锁安全点预检落点、预建目标Body/Fixture，全部成功后才提交归属、Pos和Body，失败保持原位置。保留ECS实例、生命、库存、剧情和效果时钟，不调用整实体reload。`Portal.teleport`常驻分支排队解析目标图局部锚点；只有本机玩家请求才切观察图。
