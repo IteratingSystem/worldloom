@@ -6,6 +6,7 @@ import com.badlogic.gdx.maps.MapObject;
 import com.badlogic.gdx.maps.MapObjects;
 import com.badlogic.gdx.maps.MapProperties;
 import com.badlogic.gdx.maps.objects.RectangleMapObject;
+import com.badlogic.gdx.maps.ImageResolver;
 import com.badlogic.gdx.maps.tiled.TiledMap;
 import com.badlogic.gdx.maps.tiled.TmxMapLoader;
 import com.badlogic.gdx.utils.Array;
@@ -39,6 +40,12 @@ public class EcsMapLoader extends TmxMapLoader {
         for (var entry : propertySource.index.members)
             if (entry.value.isEmpty()) projectClassInfo.put(entry.key, new Array<>());
         projectLoaded = true;
+    }
+
+    /** 无参数的资源队列也须先建立类型索引；保留原生的坐标和加载参数语义。 */
+    @Override protected TiledMap loadTiledMap(FileHandle file, Parameters parameters, ImageResolver imageResolver) {
+        loadProjectFile(propertySource.path());
+        return super.loadTiledMap(file, parameters, imageResolver);
     }
 
     /** 复用标准对象加载后保留胶囊身份，并同步延迟对象引用使用的编号索引。 */
