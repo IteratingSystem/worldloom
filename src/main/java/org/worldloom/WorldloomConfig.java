@@ -42,6 +42,7 @@ public final class WorldloomConfig {
     private final PixelPerfectCameraConfig pixelPerfectCameraConfig;
     private final String initialMap;
     private final String skinPath;
+    private final String tiledPropertyTypesPath;
 
     private WorldloomConfig(Builder builder) {
         entityLayers = copyStringMap(builder.entityLayers);
@@ -72,6 +73,7 @@ public final class WorldloomConfig {
         pixelPerfectCameraConfig = builder.pixelPerfectCameraConfig;
         initialMap = builder.initialMap;
         skinPath = builder.skinPath;
+        tiledPropertyTypesPath = builder.tiledPropertyTypesPath;
     }
 
     public static Builder builder() { return new Builder(); }
@@ -123,6 +125,8 @@ public final class WorldloomConfig {
     }
     public String getInitialMap() { return initialMap; }
     public String getSkinPath() { return skinPath; }
+    /** 返回地图自定义类型定义路径，资源加载入口据此自动安装引擎适配器。 */
+    public String getTiledPropertyTypesPath() { return tiledPropertyTypesPath; }
 
     private static ObjectMap<String, String> copyStringMap(ObjectMap<String, String> source) {
         ObjectMap<String, String> result = new ObjectMap<>();
@@ -166,6 +170,7 @@ public final class WorldloomConfig {
             PixelPerfectCameraConfig.disabled();
         private String initialMap = "defaultMap";
         private String skinPath = "skin/main.json";
+        private String tiledPropertyTypesPath = "propertytypes.json";
 
         private Builder() {
             autoComponents.add(Pos.class);
@@ -234,6 +239,14 @@ public final class WorldloomConfig {
         }
 
         public Builder skin(String path) { skinPath = path; return this; }
+
+        /** 声明Tiled自定义类型文件；只记录路径，读取及加载器注册延迟至加载资源时。 */
+        public Builder tiledPropertyTypes(String path) {
+            if (path == null || path.isBlank())
+                throw new IllegalArgumentException("Tiled property types path cannot be blank");
+            tiledPropertyTypesPath = path;
+            return this;
+        }
 
         public Builder entityLayer(String mapName, String layerName) {
             entityLayers.put(mapName, layerName);

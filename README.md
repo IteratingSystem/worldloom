@@ -84,6 +84,7 @@ WorldloomConfig config = WorldloomConfig.builder()
     .legacyBox2dLights(false)
     .initialMap("island")
     .skin("skin/main.json")
+    .tiledPropertyTypes("propertytypes.json")
     .entityLayer("island", "entities")
     .physicsLayers("island", "ground", "wall")
     .hiddenLayers("island", "WATER")
@@ -110,13 +111,16 @@ Worldloom.setGameRootClass(MainGame.class);
 
 ```java
 AssetManager assets = AssetManager.getInstance();
-assets.setLoaders("propertytypes.json");
 assets.loadAssets();
 
 // 在加载页面每帧调用
 assets.update();
 float progress = assets.getProgress();
 ```
+
+4.18.0起，资源入口按`WorldloomConfig.tiledPropertyTypes(path)`自动注册TMX、行为树和Ink加载器，无需业务页面调用`setLoaders`。类型文件路径默认`propertytypes.json`，例如Island配置为`tiled/propertytypes.json`；构建配置只记录路径，首次`loadAssets`、`loadAsset`或`getGdxAssetManager`才读取类型并注册。缺文件/坏类型直接报错，不回退到普通TMX加载器。原`setLoaders(path)`仍可显式调用；`setLoader(type, customLoader)`先安装默认值再应用覆盖，后续加载不会重复覆盖业务选择。直接创建原生LibGDX AssetManager不属于此自动接入入口。
+
+地图加载复用LibGDX 1.14.2的属性分派、标量转换和延迟对象引用。`EcsMapLoader`仅补充独立propertytypes文件、空标记类、严格组件字段契约、胶囊及旧list扩展。原生`TmxMapLoader.Parameters.projectFilePath`虽支持Tiled项目内的嵌套类/默认值，1.14.2会跳过空类、忽略类内未知字段并添加`type`元数据，不能直接替换引擎适配器。引擎去掉元信息后再合并真实成员，保留业务同名type字段；显式未知成员留到组件映射边界报错。
 
 当 `progress >= 1f` 后初始化地图数据：
 

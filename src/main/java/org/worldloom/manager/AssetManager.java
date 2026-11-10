@@ -17,6 +17,7 @@ import com.bladecoder.ink.runtime.Story;
 import org.worldloom.loader.EcsMapLoader;
 import org.worldloom.loader.InkStoryLoader;
 import org.worldloom.audio.AudioAssetPath;
+import org.worldloom.Worldloom;
 import java.util.ArrayList;
 
 
@@ -39,6 +40,7 @@ public class AssetManager {
     /** Canonical manifest snapshot shared by loading, discovery and shader/part indexes. */
     public String[] assetPathList = new String[0];
     private static com.badlogic.gdx.assets.AssetManager gdxAssetManager;
+    private boolean loadersRegistered;
 
     private AssetManager() {
         // 私有构造器，防止外部直接实例化
@@ -78,16 +80,28 @@ public class AssetManager {
     }
 
 
+    /** 显式注册引擎加载器，保留旧接入方式；新项目只需配置WorldloomConfig的类型路径。 */
     public void setLoaders(String propTypePath) {
         gdxAssetManager.setLoader(TiledMap.class, new EcsMapLoader(resolver,propTypePath));
         gdxAssetManager.setLoader(BehaviorTree.class, new BehaviorTreeLoader(resolver));
         gdxAssetManager.setLoader(Story.class, new InkStoryLoader(resolver));
+        loadersRegistered = true;
     }
+
+    /** 首次实际加载前安装默认加载器，避免业务页面遗漏注册，也不在配置阶段读取文件。 */
+    private void ensureLoaders() {
+        if (!loadersRegistered) setLoaders(Worldloom.config().getTiledPropertyTypesPath());
+    }
+
+    /** 先安装引擎默认加载器再应用业务覆盖，后续批量加载不会覆盖调用方的选择。 */
     public <T, P extends AssetLoaderParameters<T>> void setLoader(Class<T> type, AssetLoader<T, P> loader) {
+        ensureLoaders();
         gdxAssetManager.setLoader(type,loader);
     }
 
+    /** 返回已安装引擎默认加载器的底层管理器，直接加载也遵循相同接入规则。 */
     public com.badlogic.gdx.assets.AssetManager getGdxAssetManager(){
+        ensureLoaders();
         return gdxAssetManager;
     }
 
@@ -98,6 +112,7 @@ public class AssetManager {
      * @param <T>
      */
     public <T> void loadAsset(String path, Class<T> aClass) {
+        ensureLoaders();
         gdxAssetManager.load(path, aClass);
     }
 
@@ -107,6 +122,7 @@ public class AssetManager {
      * 依赖于assets模块中的assets.txt
      */
     public void loadAssets() {
+        ensureLoaders();
         for (String path : assetPathList) {
             if (path.startsWith(SOUND_DIR) && isAudioPath(path)) {
                 loadAsset(path, Sound.class);
