@@ -120,7 +120,9 @@ float progress = assets.getProgress();
 
 4.18.0起，资源入口按`WorldloomConfig.tiledPropertyTypes(path)`自动注册TMX、行为树和Ink加载器，无需业务页面调用`setLoaders`。类型文件路径默认`propertytypes.json`，例如Island配置为`tiled/propertytypes.json`；构建配置只记录路径，首次`loadAssets`、`loadAsset`或`getGdxAssetManager`才读取类型并注册。缺文件/坏类型直接报错，不回退到普通TMX加载器。原`setLoaders(path)`仍可显式调用；`setLoader(type, customLoader)`先安装默认值再应用覆盖，后续加载不会重复覆盖业务选择。直接创建原生LibGDX AssetManager不属于此自动接入入口。
 
-地图加载复用LibGDX 1.14.2的属性分派、标量转换和延迟对象引用。`EcsMapLoader`仅补充独立propertytypes文件、空标记类、严格组件字段契约、胶囊及旧list扩展。原生`TmxMapLoader.Parameters.projectFilePath`虽支持Tiled项目内的嵌套类/默认值，1.14.2会跳过空类、忽略类内未知字段并添加`type`元数据，不能直接替换引擎适配器。引擎去掉元信息后再合并真实成员，保留业务同名type字段；显式未知成员留到组件映射边界报错。
+4.19.0起，默认值解析、嵌套类递归及覆盖合并也交给LibGDX原生逻辑，类型索引在加载器内只初始化一次。`propertytypes.json`仍是默认值的数据来源：`TiledPropertySource`只在内存中把独立数组包装为原生需要的`propertyTypes`项目结构，不写文件，不另维护默认值副本；路径也可直接指向已有`.tiled-project`。文件读取边界仅映射类名/成员名来补空类及保留未知字段，运行加载不再使用旧`Member`的逐类型默认值转换。
+
+`EcsMapLoader`仍保留空标记类、严格组件字段契约、胶囊及旧XML list扩展：原生1.14.2会跳过空类、丢弃类内未知字段并添加`type`元数据。适配器补回空类，移除元信息后让原生恢复真实同名type字段；未知属性原值留到组件映射边界报错。覆盖值查找限定当前类的直接成员，修正原生递归查找把子类同名值套到父类的问题；颜色等可变默认值由原生为每份配置独立创建。业务组件字段仍遵循标量/枚举契约。
 
 当 `progress >= 1f` 后初始化地图数据：
 

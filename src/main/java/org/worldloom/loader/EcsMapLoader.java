@@ -1,7 +1,7 @@
 package org.worldloom.loader;
 
 import com.badlogic.gdx.assets.loaders.FileHandleResolver;
-import com.badlogic.gdx.graphics.Color;
+import com.badlogic.gdx.files.FileHandle;
 import com.badlogic.gdx.maps.MapObject;
 import com.badlogic.gdx.maps.MapObjects;
 import com.badlogic.gdx.maps.MapProperties;
@@ -10,25 +10,33 @@ import com.badlogic.gdx.maps.tiled.TiledMap;
 import com.badlogic.gdx.maps.tiled.TmxMapLoader;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.GdxRuntimeException;
-import com.badlogic.gdx.utils.ObjectMap;
+import com.badlogic.gdx.utils.JsonValue;
 import com.badlogic.gdx.utils.XmlReader;
-import org.worldloom.manager.JsonManager;
 import org.worldloom.map.CapsuleMapObject;
 
-/** 复用原生TMX加载，只适配独立类型定义、空类、严格字段契约和引擎形状/列表扩展。 */
+/** 由原生TMX加载器合并类默认值，仅补齐类型来源、空类、字段校验及引擎形状/列表扩展。 */
 public class EcsMapLoader extends TmxMapLoader {
-    private final ObjectMap<String, PropertyType> propertyTypes = new ObjectMap<>();
+    private final TiledPropertySource propertySource;
+    private boolean projectLoaded;
 
-    /** 一次映射并索引Tiled自定义类型；使用同一资源解析器，支持内部资源与离线文件。 */
+    /** 保存独立类型文件的内存项目视图；默认值由首次加载地图时的原生项目解析处理。 */
     public EcsMapLoader(FileHandleResolver resolver, String propTypePath) {
         super(resolver);
-        PropertyType[] definitions = JsonManager.readConfig(PropertyType[].class, resolver.resolve(propTypePath));
-        for (PropertyType definition : definitions) {
-            if (definition == null || definition.name == null || definition.name.isBlank()
-                || propertyTypes.containsKey(definition.name))
-                throw new IllegalArgumentException("Invalid or duplicate Tiled property type: " + propTypePath);
-            propertyTypes.put(definition.name, definition);
-        }
+        propertySource = new TiledPropertySource(resolver.resolve(propTypePath));
+    }
+
+    /** 只有配置的类型文件使用内存项目视图，地图、TSX及图片仍走调用方的解析器。 */
+    @Override public FileHandle resolve(String fileName) {
+        return propertySource != null && propertySource.path().equals(fileName) ? propertySource : super.resolve(fileName);
+    }
+
+    /** 一次建立原生类型索引，补回原生跳过的空类；后续地图共享只读默认值定义。 */
+    @Override protected void loadProjectFile(String ignored) {
+        if (projectLoaded) return;
+        super.loadProjectFile(propertySource.path());
+        for (var entry : propertySource.index.members)
+            if (entry.value.isEmpty()) projectClassInfo.put(entry.key, new Array<>());
+        projectLoaded = true;
     }
 
     /** 复用标准对象加载后保留胶囊身份，并同步延迟对象引用使用的编号索引。 */
@@ -57,21 +65,47 @@ public class EcsMapLoader extends TmxMapLoader {
                 properties.put(property.getAttribute("name"), parseListProperty(property));
     }
 
-    /** 合并独立类型文件的默认值与显式字段；保留未知字段供组件边界报错，不被原生逻辑静默丢弃。 */
+    /** 原生合并默认值与覆盖；保留未声明属性供组件边界报错，避免原生静默丢弃。 */
     @Override
     protected void loadClassProperties(String className, MapProperties properties, XmlReader.Element element) {
-        PropertyType definition = propertyTypes.get(className);
-        if (definition == null || !"class".equals(definition.type) || definition.members == null)
-            throw new GdxRuntimeException("Unknown Tiled class: " + className);
-        // 原生加载器插入的是类元信息，不能把它当成组件字段；真实同名字段随后从定义恢复。
         properties.remove("type");
-        for (Member member : definition.members) {
-            Object value = member.value;
-            if (value instanceof Color color) value = new Color(color);
-            else if (value instanceof Array<?> array) value = new Array<>(array);
-            properties.put(member.name, value);
-        }
-        loadProperties(properties, element);
+        XmlReader.Element values = propertyValues(element);
+        super.loadClassProperties(className, properties, values);
+        var declared = propertySource.index.members.get(className);
+        if (values != null) for (XmlReader.Element property : values.getChildrenByName("property"))
+            if (!declared.contains(property.getAttribute("name"))) loadExtraProperty(properties, property);
+    }
+
+    /** 嵌套类的纯默认值也由原生递归读取，元信息不进入业务字段。 */
+    @Override protected void loadJsonClassProperties(String className, MapProperties properties, JsonValue values) {
+        properties.remove("type");
+        super.loadJsonClassProperties(className, properties, values);
+    }
+
+    /** 仅在当前类的直接成员中查覆盖，防原生递归查找把子类同名字段套到父类上。 */
+    @Override protected XmlReader.Element getPropertyByName(XmlReader.Element element, String name) {
+        XmlReader.Element values = propertyValues(element);
+        if (values != null) for (XmlReader.Element property : values.getChildrenByName("property"))
+            if (name.equals(property.getAttribute("name"))) return property;
+        return null;
+    }
+
+    /** 原生递归有时传入类property节点，统一取其properties容器。 */
+    private static XmlReader.Element propertyValues(XmlReader.Element element) {
+        return element == null || "properties".equals(element.getName()) ? element : element.getChildByName("properties");
+    }
+
+    /** 只解析原生未处理的未知字段，保留原值交给实体/区域组件的严格字段边界。 */
+    private void loadExtraProperty(MapProperties properties, XmlReader.Element property) {
+        String name = property.getAttribute("name"), type = property.getAttribute("type", null);
+        String value = property.getAttribute("value", property.getText());
+        if ("object".equals(type)) loadObjectProperty(properties, name, value);
+        else if ("class".equals(type)) {
+            MapProperties nested = new MapProperties();
+            loadClassProperties(property.getAttribute("propertytype"), nested, property.getChildByName("properties"));
+            properties.put(name, nested);
+        } else if ("list".equals(type)) properties.put(name, parseListProperty(property));
+        else loadBasicProperty(properties, name, value, type);
     }
 
     /** 原生不支持list和旧大写String；列表内容在XML扩展入口读取，其余类型沿用原生转换。 */
