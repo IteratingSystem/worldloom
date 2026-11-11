@@ -802,7 +802,7 @@ public class PlayerInput extends InputProcessing {
 
 ### 11.2 长按
 
-实现 `LongPressListener`，并通过 `InputManager.addLongPressListener(listener)` 注册。停止使用时调用对应的 `removeLongPressListener`。
+实现 `LongPressListener`，并通过 `InputManager.addLongPressListener(listener)` 注册。停止使用时调用对应的 `removeLongPressListener`。4.19.6起长按处理器始终排在普通输入处理器之后，重复登记同一监听器不会增加回调；最后一个监听器退出时取消待触发计时并解绑。移除处理器不会夺回其它页面已经设置的输入入口，`clear()`同时清空监听和计时，后续可重新登记。`InputProcess.reload()`先释放旧处理器，避免读档重载留下监听。
 
 ### 11.3 交互
 
@@ -1140,6 +1140,7 @@ portal.teleport(carried, playerId, true);
 - `MapManager.getMapObject(map, id)`：按来源地图和对象 ID 重新关联对象。
 - `MapManager.getPhyLayer(map)`：取得配置的物理层。
 - `EntityBuilder` / `EntitySerializer` / `EntityDeleter`：底层实体构建、快照和删除 API。业务代码优先使用事件或 `GameSnapshotManager`，避免绕过会话状态。
+  `EntityDeleter`逐个释放Disposable组件；单个释放抛出RuntimeException时继续清理其它组件、稳定身份和标签并删除实体，最后记录错误，不向业务报告已提交删除失败。批量删除先固定编号快照，保留标签按整数值匹配，不受编号大于127影响。
 
 `org.worldloom.script.Script` 当前是未接入运行时流程的预留类型，不应把它视为已经完成的脚本系统。
 
