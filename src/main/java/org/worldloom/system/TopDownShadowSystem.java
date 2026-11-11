@@ -66,7 +66,8 @@ public class TopDownShadowSystem extends BaseSystem {
     private final OpaqueRegionCache opaqueRegions = new OpaqueRegionCache();
     private final ObjectMap<ShadowVolumeGeometry, Mesh> volumeMeshes = new ObjectMap<>();
     private final com.badlogic.gdx.utils.Array<com.badlogic.gdx.utils.Disposable> renderResources = new com.badlogic.gdx.utils.Array<>();
-    private final com.badlogic.gdx.utils.Array<FrameBuffer> frameBuffers = new com.badlogic.gdx.utils.Array<>();
+    private ShadowBuffers buffers;
+    private int pointBufferWidth, pointBufferHeight;
 
     private B2dSystem b2dSystem;
     private CameraSystem cameraSystem;
@@ -87,14 +88,6 @@ public class TopDownShadowSystem extends BaseSystem {
     private Mesh screenQuad;
     private Mesh projectedShadowMesh;
     private final Mesh[] volumeSliceMeshes = new Mesh[MAX_VOLUME_LAYERS + 1];
-    private FrameBuffer heightMapSource;
-    private FrameBuffer heightMap;
-    private FrameBuffer depthDownsampleBuffer;
-    private FrameBuffer entityMask;
-    private FrameBuffer groundShadowSource;
-    private FrameBuffer groundShadowMask;
-    private FrameBuffer receiverShadowMask;
-    private FrameBuffer sunShadowMap;
     private ShaderProgram heightMapShader;
     private ShaderProgram entityMaskShader;
     private ShaderProgram projectedShadowShader;
@@ -107,7 +100,6 @@ public class TopDownShadowSystem extends BaseSystem {
     private ShaderProgram depthExpandShader;
     private int bufferWidth;
     private int bufferHeight;
-    private int depthBufferHeight;
     private float shadowTime;
     private float lightUvMinX;
     private float lightUvMinY;
@@ -207,7 +199,6 @@ public class TopDownShadowSystem extends BaseSystem {
                 shaderManager.getVertexContext(SHADER_PATH + "screen"),
                 shaderManager.getFragmentContext(SHADER_PATH + "depth_expand"),
                 "Shadow depth expansion");
-            resizeBuffersIfNeeded();
             validateRenderOrder();
             Gdx.app.log(TAG, "Top-down shadow system initialized");
         } catch (RuntimeException | Error failure) {
@@ -238,7 +229,6 @@ public class TopDownShadowSystem extends BaseSystem {
     /** 只合成观察图阴影与灯光，保留本图屏外投影者的影响。 */
     @Override
     protected void processSystem() {
-        resizeBuffersIfNeeded();
         shadowTime = (shadowTime + Math.min(world.getDelta(), 1f / 15f)) % 1000f;
         synchronizePointLights();
         boolean hasPointLights = hasViewedPointLights();
@@ -248,6 +238,7 @@ public class TopDownShadowSystem extends BaseSystem {
             return;
         }
 
+        resizeBuffersIfNeeded();
         int previousActiveTexture = captureTextureBindings();
         try {
             beginShadowCamera();
@@ -272,6 +263,7 @@ public class TopDownShadowSystem extends BaseSystem {
             return;
         }
 
+        resizeBuffersIfNeeded();
         int previousActiveTexture = captureTextureBindings();
         try {
             beginShadowCamera();
@@ -401,6 +393,7 @@ public class TopDownShadowSystem extends BaseSystem {
 
     /** 合成观察图所有灯光的影响，屏外光源仍可照亮视域内区域。 */
     private void renderPointLights() {
+        resizePointBuffersIfNeeded();
         IntBag entities = pointLightSubscription.getEntities();
         int[] ids = entities.getData();
         pointRayHandler.setCombinedMatrix(cameraSystem.camera);
@@ -463,7 +456,7 @@ public class TopDownShadowSystem extends BaseSystem {
     }
 
     private void renderEntityMask() {
-        entityMask.begin();
+        buffers.entityMask.begin();
         clearBuffer();
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendEquation(GL_MAX_BLEND_EQUATION);
@@ -479,11 +472,11 @@ public class TopDownShadowSystem extends BaseSystem {
         spriteBatch.setShader(null);
         Gdx.gl.glBlendEquation(GL20.GL_FUNC_ADD);
         Gdx.gl.glDisable(GL20.GL_BLEND);
-        entityMask.end();
+        buffers.entityMask.end();
     }
 
     private void renderHeightMap() {
-        heightMapSource.begin();
+        buffers.heightMapSource.begin();
         clearBuffer();
         spriteBatch.setProjectionMatrix(cameraSystem.camera.combined);
         spriteBatch.setShader(heightMapShader);
@@ -502,14 +495,14 @@ public class TopDownShadowSystem extends BaseSystem {
         spriteBatch.end();
         spriteBatch.enableBlending();
         spriteBatch.setShader(null);
-        heightMapSource.end();
-        expandDepth(heightMapSource, heightMap);
+        buffers.heightMapSource.end();
+        expandDepth(buffers.heightMapSource, buffers.heightMap);
     }
 
     /** 从太阳视角渲染带深度和实体ID的立体剪影。 */
     private void renderSunShadowMap() {
         updateSunLightSpace();
-        sunShadowMap.begin();
+        buffers.sunShadowMap.begin();
         Gdx.gl.glClearColor(0f, 0f, 0f, 0f);
         Gdx.gl.glClearDepthf(1f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT | GL20.GL_DEPTH_BUFFER_BIT);
@@ -529,7 +522,7 @@ public class TopDownShadowSystem extends BaseSystem {
         } finally {
             if (culling) Gdx.gl.glEnable(GL20.GL_CULL_FACE);
             Gdx.gl.glDisable(GL20.GL_DEPTH_TEST);
-            sunShadowMap.end();
+            buffers.sunShadowMap.end();
         }
     }
 
@@ -698,7 +691,7 @@ public class TopDownShadowSystem extends BaseSystem {
             renderSunGroundShadowMask();
             return;
         }
-        groundShadowSource.begin();
+        buffers.groundShadowSource.begin();
         clearBuffer();
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendEquation(GL_MAX_BLEND_EQUATION);
@@ -713,22 +706,22 @@ public class TopDownShadowSystem extends BaseSystem {
         renderProjectedCasters(light);
         Gdx.gl.glBlendEquation(GL20.GL_FUNC_ADD);
         Gdx.gl.glDisable(GL20.GL_BLEND);
-        groundShadowSource.end();
-        expandDepth(groundShadowSource, groundShadowMask);
+        buffers.groundShadowSource.end();
+        expandDepth(buffers.groundShadowSource, buffers.groundShadowMask);
     }
 
     private void renderSunGroundShadowMask() {
-        groundShadowMask.begin();
+        buffers.groundShadowMask.begin();
         clearBuffer();
         Gdx.gl.glDisable(GL20.GL_BLEND);
-        sunShadowMap.getColorBufferTexture().bind(0);
+        buffers.sunShadowMap.getColorBufferTexture().bind(0);
         lightSpaceGroundShader.bind();
         lightSpaceGroundShader.setUniformi("u_shadowMap", 0);
         lightSpaceGroundShader.setUniformMatrix(
             "u_invProjTrans", cameraSystem.camera.invProjectionView);
         setLightSpaceUniforms(lightSpaceGroundShader);
         screenQuad.render(lightSpaceGroundShader, GL20.GL_TRIANGLE_FAN);
-        groundShadowMask.end();
+        buffers.groundShadowMask.end();
     }
 
     private void renderProjectedCasters(TopDownShadowLight light) {
@@ -742,7 +735,7 @@ public class TopDownShadowSystem extends BaseSystem {
     }
 
     private void renderReceiverShadowMask(TopDownShadowLight light) {
-        receiverShadowMask.begin();
+        buffers.receiverShadowMask.begin();
         clearBuffer();
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendEquation(GL_MAX_BLEND_EQUATION);
@@ -759,8 +752,8 @@ public class TopDownShadowSystem extends BaseSystem {
         receiverShader.setUniformf("u_time", shadowTime);
         setLightUniforms(receiverShader, light);
         setLightSpaceUniforms(receiverShader);
-        heightMap.getColorBufferTexture().bind(1);
-        sunShadowMap.getColorBufferTexture().bind(2);
+        buffers.heightMap.getColorBufferTexture().bind(1);
+        buffers.sunShadowMap.getColorBufferTexture().bind(2);
         Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
         for (int i = 0; i < sortedShadowEntities.size; i++) {
             int entityId = sortedShadowEntities.get(i);
@@ -774,7 +767,7 @@ public class TopDownShadowSystem extends BaseSystem {
         Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
         Gdx.gl.glBlendEquation(GL20.GL_FUNC_ADD);
         Gdx.gl.glDisable(GL20.GL_BLEND);
-        receiverShadowMask.end();
+        buffers.receiverShadowMask.end();
     }
 
     private void setLightUniforms(ShaderProgram shader,
@@ -926,7 +919,7 @@ public class TopDownShadowSystem extends BaseSystem {
         target.begin();
         clearBuffer();
         Gdx.gl.glDisable(GL20.GL_BLEND);
-        depthDownsampleBuffer.getColorBufferTexture().bind(0);
+        buffers.depthDownsampleBuffer.getColorBufferTexture().bind(0);
         depthExpandShader.bind();
         depthExpandShader.setUniformi("u_source", 0);
         depthExpandShader.setUniformf("u_heightRange", config.getHeightRange());
@@ -939,7 +932,7 @@ public class TopDownShadowSystem extends BaseSystem {
     }
 
     private void downsampleDepth(FrameBuffer source) {
-        depthDownsampleBuffer.begin();
+        buffers.depthDownsampleBuffer.begin();
         clearBuffer();
         Gdx.gl.glDisable(GL20.GL_BLEND);
         source.getColorBufferTexture().bind(0);
@@ -948,7 +941,7 @@ public class TopDownShadowSystem extends BaseSystem {
         depthDownsampleShader.setUniformf(
             "u_sourceTexelY", 1f / source.getHeight());
         screenQuad.render(depthDownsampleShader, GL20.GL_TRIANGLE_FAN);
-        depthDownsampleBuffer.end();
+        buffers.depthDownsampleBuffer.end();
     }
 
     private void drawEntity(int entityId) {
@@ -1018,9 +1011,9 @@ public class TopDownShadowSystem extends BaseSystem {
         pixelPerfectRenderSystem.resumeWorldTarget();
         Gdx.gl.glEnable(GL20.GL_BLEND);
         Gdx.gl.glBlendFunc(GL20.GL_ONE, GL20.GL_ONE);
-        receiverShadowMask.getColorBufferTexture().bind(3);
-        entityMask.getColorBufferTexture().bind(2);
-        groundShadowMask.getColorBufferTexture().bind(1);
+        buffers.receiverShadowMask.getColorBufferTexture().bind(3);
+        buffers.entityMask.getColorBufferTexture().bind(2);
+        buffers.groundShadowMask.getColorBufferTexture().bind(1);
         pointRayHandler.getLightMapTexture().bind(0);
         pointCompositeShader.bind();
         pointCompositeShader.setUniformi("u_lightMap", 0);
@@ -1033,9 +1026,9 @@ public class TopDownShadowSystem extends BaseSystem {
     }
 
     private void bindCompositeMasks(ShaderProgram shader) {
-        receiverShadowMask.getColorBufferTexture().bind(2);
-        entityMask.getColorBufferTexture().bind(1);
-        groundShadowMask.getColorBufferTexture().bind(0);
+        buffers.receiverShadowMask.getColorBufferTexture().bind(2);
+        buffers.entityMask.getColorBufferTexture().bind(1);
+        buffers.groundShadowMask.getColorBufferTexture().bind(0);
         shader.bind();
         shader.setUniformi("u_groundShadow", 0);
         shader.setUniformi("u_entityMask", 1);
@@ -1056,56 +1049,27 @@ public class TopDownShadowSystem extends BaseSystem {
         Gdx.gl.glDisable(GL20.GL_BLEND);
     }
 
+    /** 只有实际需要合成阴影或灯光时才分配；完整集合创建成功后再替换旧集合。 */
     private void resizeBuffersIfNeeded() {
-        int width = Math.max(1, Math.round(
-            pixelPerfectRenderSystem.getRenderWidth()
-                * config.getResolutionScale()));
-        int height = Math.max(1, Math.round(
-            pixelPerfectRenderSystem.getRenderHeight()
-                * config.getResolutionScale()));
-        if (width == bufferWidth && height == bufferHeight) {
-            return;
-        }
-        disposeBuffers();
-        bufferWidth = width;
-        bufferHeight = height;
-        depthBufferHeight = Math.max(1, (height + 1) / 2);
-        pointRayHandler.resizeFBO(width, height);
-        heightMapSource = createBuffer(Texture.TextureFilter.Nearest);
-        heightMap = createDepthBuffer(Texture.TextureFilter.Linear);
-        depthDownsampleBuffer = createDepthBuffer(Texture.TextureFilter.Nearest);
-        entityMask = createBuffer(Texture.TextureFilter.Nearest);
-        groundShadowSource = createBuffer(Texture.TextureFilter.Nearest);
-        groundShadowMask = createDepthBuffer(Texture.TextureFilter.Linear);
-        receiverShadowMask = createBuffer(Texture.TextureFilter.Linear);
-        sunShadowMap = new FrameBuffer(
-            Pixmap.Format.RGBA8888, bufferWidth, bufferHeight, true);
-        frameBuffers.add(sunShadowMap);
-        sunShadowMap.getColorBufferTexture().setFilter(
-            Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
+        int width = Math.max(1, Math.round(pixelPerfectRenderSystem.getRenderWidth() * config.getResolutionScale()));
+        int height = Math.max(1, Math.round(pixelPerfectRenderSystem.getRenderHeight() * config.getResolutionScale()));
+        if (buffers != null && width == bufferWidth && height == bufferHeight) return;
+        ShadowBuffers next = new ShadowBuffers(width, height), previous = buffers;
+        buffers = next; bufferWidth = width; bufferHeight = height;
+        if (previous != null) previous.dispose();
     }
 
-    private FrameBuffer createBuffer(Texture.TextureFilter filter) {
-        return createBuffer(bufferHeight, filter);
+    /** 只在点光源真正绘制时调整第三方灯光缓冲，纯日光场景不重复分配它。 */
+    private void resizePointBuffersIfNeeded() {
+        if (pointBufferWidth == bufferWidth && pointBufferHeight == bufferHeight) return;
+        pointRayHandler.resizeFBO(bufferWidth, bufferHeight);
+        pointBufferWidth = bufferWidth; pointBufferHeight = bufferHeight;
     }
 
-    private FrameBuffer createDepthBuffer(Texture.TextureFilter filter) {
-        return createBuffer(depthBufferHeight, filter);
-    }
-
-    private FrameBuffer createBuffer(int height, Texture.TextureFilter filter) {
-        FrameBuffer buffer = new FrameBuffer(
-            Pixmap.Format.RGBA8888, bufferWidth, height, false);
-        frameBuffers.add(buffer);
-        buffer.getColorBufferTexture().setFilter(filter, filter);
-        return buffer;
-    }
-
-    /** 缓冲尺寸变化或初始化失败时释放已经创建的部分，不依赖某个哨兵字段是否赋值。 */
+    /** 退出或初始化失败时释放当前集合，不修改共享渲染资源。 */
     private void disposeBuffers() {
-        while (frameBuffers.notEmpty()) frameBuffers.pop().dispose();
-        heightMapSource = heightMap = depthDownsampleBuffer = entityMask = null;
-        groundShadowSource = groundShadowMask = receiverShadowMask = sunShadowMap = null;
+        if (buffers != null) { buffers.dispose(); buffers = null; }
+        bufferWidth = bufferHeight = pointBufferWidth = pointBufferHeight = 0;
     }
 
     private void clearBuffer() {

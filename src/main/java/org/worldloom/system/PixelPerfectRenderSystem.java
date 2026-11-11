@@ -151,6 +151,7 @@ public final class PixelPerfectRenderSystem extends BaseSystem {
             ? 0f : subpixelY / worldUnitsPerPixelY;
     }
 
+    /** 新缓冲完整创建后才替换旧目标，失败时不留下尺寸已更新但纹理为空的状态。 */
     private void ensureBuffer() {
         int width = getRenderWidth();
         int height = getRenderHeight();
@@ -158,18 +159,22 @@ public final class PixelPerfectRenderSystem extends BaseSystem {
             && width == bufferWidth && height == bufferHeight) {
             return;
         }
-        disposeBuffer();
-        bufferWidth = width;
-        bufferHeight = height;
-        worldBuffer = new FrameBuffer(
-            Pixmap.Format.RGBA8888, bufferWidth, bufferHeight, false);
-        Texture texture = worldBuffer.getColorBufferTexture();
-        texture.setFilter(
-            Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
-        texture.setWrap(
-            Texture.TextureWrap.ClampToEdge, Texture.TextureWrap.ClampToEdge);
-        worldRegion = new TextureRegion(texture);
-        worldRegion.flip(false, true);
+        FrameBuffer next = new FrameBuffer(Pixmap.Format.RGBA8888, width, height, false);
+        TextureRegion nextRegion;
+        try {
+            Texture texture = next.getColorBufferTexture();
+            texture.setFilter(Texture.TextureFilter.Nearest, Texture.TextureFilter.Nearest);
+            texture.setWrap(Texture.TextureWrap.ClampToEdge, Texture.TextureWrap.ClampToEdge);
+            nextRegion = new TextureRegion(texture);
+            nextRegion.flip(false, true);
+        } catch (RuntimeException | Error failure) {
+            next.dispose();
+            throw failure;
+        }
+        FrameBuffer previous = worldBuffer;
+        worldBuffer = next; worldRegion = nextRegion;
+        bufferWidth = width; bufferHeight = height;
+        if (previous != null) previous.dispose();
         Gdx.app.log(TAG, "World buffer resized: "
             + bufferWidth + "x" + bufferHeight);
     }

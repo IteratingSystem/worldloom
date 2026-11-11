@@ -562,6 +562,8 @@ WorldloomConfig.builder()
 
 窗口尺寸变化后，世界缓冲会在下一帧自动重建，因此不需要游戏项目额外处理。默认一像素扩边已经足够；特殊后处理需要更宽采样范围时可以使用 `PixelPerfectCameraConfig.enabled(pixels)`。
 
+4.19.3起，世界缓冲和阴影缓冲集合均在新资源完整创建后才替换旧资源，部分创建失败会清理已分配资源。没有日光投影者和开启的点光源时不分配阴影缓冲；点光源缓冲仅在实际使用时调整尺寸。这些内部优化不改变配置、投影到其它对象的规则或UI字体采样。
+
 游戏系统如果在 `WORLD_EFFECT`、`POST_AMBIENT` 或 `POST_RENDER` 阶段自行使用 `FrameBuffer`，结束临时缓冲后必须恢复世界目标：
 
 ```java
@@ -756,7 +758,7 @@ shadows.getSunLight().setElevationDegree(50f);
 
 太阳阴影长度不提供固定倍率配置，只由太阳高度计算。地面投影和精灵接收阴影共用光空间深度图；深度图比较排除同一实体，原高度图射线继续处理自阴影。`heightRange` 是高度图可表示的最大世界高度；超过它的高度会被截断。`resolutionScale` 控制阴影缓冲区相对窗口的分辨率，默认 `0.5`，提高它会改善边缘精度并增加填充与显存开销。
 
-俯视角光影使用的 GLSL 位于引擎资源目录 `shader/topdown/`。系统通过 `ShaderManager` 按完整 internal/classpath 路径加载，不再把 Shader 字符串写在 Java 类中。`ShaderManager` 仍优先使用游戏 `assets.txt` 中的同名文件，找不到时才回退读取引擎内置资源。
+俯视角光影使用的 GLSL 位于引擎资源目录 `shader/topdown/`。系统通过 `ShaderManager` 按完整 internal/classpath 路径加载，不再把 Shader 字符串写在 Java 类中。`ShaderManager` 仍优先使用游戏 `assets.txt` 中的同名文件，找不到时才回退读取引擎内置资源。4.19.3起按完整路径、目录后缀和文件名建立首次匹配索引，成功读取的UTF-8源码在当前资源会话中复用；退出资源容器后失效，旧句柄不可访问新会话。运行时修改Shader文件需重建资源会话；ShaderProgram仍由创建方释放。
 
 ### 10.7 图层采样
 

@@ -218,6 +218,7 @@ public class AssetManager {
         org.worldloom.manager.map.MapManager.clearAnimationIndexes();
         SkinManager.clearCache();
         BundleManager.clearCache();
+        ShaderManager.clearCache();
         if (instance == this) instance = null;
         try {
             gdxAssetManager.dispose();
