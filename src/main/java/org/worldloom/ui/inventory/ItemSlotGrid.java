@@ -18,6 +18,16 @@ import org.worldloom.ui.BaseEcsUI;
  */
 public class ItemSlotGrid extends BaseEcsUI {
 
+    /** 拖拽来源由网格坐标标识，不依赖Source的Actor或事件目标的父子层级。 */
+    public record DragItem(ItemSlotGrid grid, int row, int column) { }
+
+    /** 优先读取明确载荷；旧调用未提供载荷时兼容直接以ItemSlot注册的来源。 */
+    public static ItemSlot sourceSlot(DragAndDrop.Source source, DragAndDrop.Payload payload) {
+        if (payload != null && payload.getObject() instanceof DragItem item)
+            return item.grid() == null ? null : item.grid().getSlot(item.row(), item.column());
+        return source != null && source.getActor() instanceof ItemSlot slot ? slot : null;
+    }
+
     //拖拽功能
     private DragAndDrop dragAndDrop;
     private final ObjectMap<ItemSlot, DragAndDrop.Source> dragSources = new ObjectMap<>();
@@ -135,11 +145,10 @@ public class ItemSlotGrid extends BaseEcsUI {
         slotTable.clear();
     }
 
+    /** 只返回当前实际显示的格子；分页空行、越界坐标及已清理网格返回null。 */
     public ItemSlot getSlot(int x,int y){
-        if (slots == null) {
-            return null;
-        }
-        return slots[x][y];
+        return slots == null || x < 0 || x >= slots.length || slots[x] == null
+            || y < 0 || y >= slots[x].length ? null : slots[x][y];
     }
 
     public void setSelectOnly(ItemSlot targetSlot){
@@ -149,9 +158,13 @@ public class ItemSlotGrid extends BaseEcsUI {
         }
         setSelectOnly(targetSlot.getInvX(),targetSlot.getInvY());
     }
+    /** 更新当前可见格的选中态，允许分页产生的空行和稀疏格子。 */
     public void setSelectOnly(int x,int y){
+        if (slots == null) return;
         for (ItemSlot[] slot : slots) {
+            if (slot == null) continue;
             for (ItemSlot itemSlot : slot) {
+                if (itemSlot == null) continue;
                 itemSlot.setSelected(false);
                 if (itemSlot.equalsPos(x,y)) {
                     itemSlot.setSelected(true);
@@ -190,7 +203,10 @@ public class ItemSlotGrid extends BaseEcsUI {
             public boolean drag(DragAndDrop.Source source,
                                 DragAndDrop.Payload payload,
                                 float x, float y, int pointer) {
-                return !slot.isDisabled();
+                ItemSlot from = sourceSlot(source, payload);
+                return !slot.isDisabled() && from != null && !from.isDisabled()
+                    && !isEmpty(from.getSlotDatum()) && from.getInvUI() != null
+                    && !blockedSourceTypes.contains(from.getInvUI().getClass());
             }
             //拖拽后松开按钮
             /** 校验来源后交由网格处理实际转移。 */
@@ -199,7 +215,9 @@ public class ItemSlotGrid extends BaseEcsUI {
                              DragAndDrop.Payload payload,
                              float x, float y, int pointer) {
                 //黑名单中的库存无法触发拖放
-                ItemSlot fromSlot = (ItemSlot)source.getActor();
+                ItemSlot fromSlot = sourceSlot(source, payload);
+                if (fromSlot == null || fromSlot.getInvUI() == null || fromSlot.isDisabled() || slot.isDisabled()
+                    || isEmpty(fromSlot.getSlotDatum())) return;
                 if (blockedSourceTypes.contains(fromSlot.getInvUI().getClass())) {
                     Gdx.app.debug(getTag(),"This drag originates from the blacklist and is prohibited!");
                     return;
@@ -216,8 +234,11 @@ public class ItemSlotGrid extends BaseEcsUI {
 
     /* ===== 子类唯一要关心的两个钩子 ===== */
     //按住开始拖拽
+    /** 空格和禁用格不开始拖拽；载荷显式保存来源，图标只作为临时表现。 */
     public DragAndDrop.Payload onDragStart(ItemSlot slot) {
+        if (slot == null || slot.isDisabled() || isEmpty(slot.getSlotDatum())) return null;
         DragAndDrop.Payload payload = new DragAndDrop.Payload();
+        payload.setObject(new DragItem(this, slot.getInvX(), slot.getInvY()));
         Image dragActor = new Image(slot.getIcon().getDrawable());
         dragActor.setScale(4f);
         payload.setDragActor(dragActor);
@@ -235,8 +256,8 @@ public class ItemSlotGrid extends BaseEcsUI {
             return;
         }
 
-        if (source == null || !(source.getActor() instanceof ItemSlot fromSlot)
-            || !(targetActor instanceof ItemSlot targetSlot)) {
+        ItemSlot fromSlot = sourceSlot(source, payload);
+        if (fromSlot == null || !(targetActor instanceof ItemSlot targetSlot)) {
             return;
         }
         //不允许自己拖拽到自己

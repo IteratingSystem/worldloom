@@ -588,13 +588,15 @@ public class HurtUniforms extends ShaderUniforms {
     @Override
     public void setUniforms(float delta) {
         super.setUniforms(delta);
-        shaderProgram.bind();
+        // 引擎已提交上一批、绑定本程序；这里只设置本实体的参数。
         shaderProgram.setUniformf("u_time", iTime);
     }
 }
 ```
 
 然后把 `ShaderComp.uniformSimpleName` 设为 `HurtUniforms`。该类必须位于 `ReflectionManager` 配置的游戏根包下。
+
+4.19.4起，实体Uniform回调在Batch完成旧绘制、切换到目标程序后执行，同程序的不同参数也隔离提交。回调仅设置本实体的表现参数，不能切换Batch、持有它或承担游戏逻辑计时；辅助纹理使用非0号槽，引擎在绘制前恢复0号槽。回调或绘制异常时仍恢复原Batch程序。`ShaderComp`独占自己编译的程序，重载先释放旧程序；源码缺失、编译或回调构造失败会清空结果并回退普通绘制。通过`EntityDeleter`删除、直接`world.delete`/移除ShaderComp及世界退出均回收程序，重复释放安全；移除Render、隐藏或切图不会释放仍挂载的ShaderComp。源纹理与Shader源码仍由应用资源容器持有。
 
 ### 10.3 Shader 瓦片层
 
@@ -923,6 +925,8 @@ grid.rebuild();
 调用 `setSlotData` 后必须调用 `rebuild()` 才会生成格子 Actor。
 
 `rebuild()` 会注销本视图旧格子的拖拽 Source/Target，不影响共用同一 `DragAndDrop` 的其他库存。自定义空间布局重写 `rebuild()` 时，先调用受保护的 `clearSlots()`，再生成布局并逐格 `enableDrag(slot)`；同一个格子重复启用不会重复注册。允许空网格和不等长行。`SlotDatum.getDrawable()` 按源地图/对象编号缓存包装，运行时缓存不写进存档。
+
+4.19.4起，`onDragStart`拒绝空格/禁用格，并将`DragItem(grid,row,column)`放入Payload.object。拖放及外部丢弃通过`ItemSlotGrid.sourceSlot(source,payload)`读取来源，不从事件目标的父节点推测格子；旧的ItemSlot来源在未提供明确载荷时仍兼容。自定义Source可以使用其它Actor并携带同样的DragItem；未知来源被拒绝，不会强转崩溃。分页未创建的行/格和越界`getSlot`返回null，`setSelectOnly`跳过空行/格。
 
 格子可用 `slot.addAcceptType(ItemType.SWORD)` 限定物品类型。类型列表为空或未设置时接受所有类型；
 交换物品时会同时校验目标格和来源格，避免从装备栏拖向背包时把不兼容的物品换回装备栏。
