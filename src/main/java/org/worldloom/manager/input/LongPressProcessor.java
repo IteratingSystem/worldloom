@@ -1,78 +1,84 @@
 package org.worldloom.manager.input;
 
-import com.badlogic.gdx.InputProcessor;
+import com.badlogic.gdx.InputAdapter;
 import com.badlogic.gdx.utils.IntMap;
 import com.badlogic.gdx.utils.SnapshotArray;
 import com.badlogic.gdx.utils.Timer;
+import java.util.Objects;
 
-public class LongPressProcessor implements InputProcessor {
-    private IntMap<Timer.Task> keyTasks = new IntMap<>(); // 每个按键对应的延迟任务
-    private static final long LONG_PRESS_DURATION = 500; // 毫秒
-    private SnapshotArray<LongPressListener> listeners = new SnapshotArray<>();
+/** UI之后处理长短按；监听器退出时取消旧任务，不把上一局按键带入新世界。 */
+public class LongPressProcessor extends InputAdapter {
+    private final IntMap<Timer.Task> keyTasks = new IntMap<>();
+    private static final float LONG_PRESS_SECONDS = .5f;
+    private final SnapshotArray<LongPressListener> listeners = new SnapshotArray<>(LongPressListener.class);
 
+    /** 同一实例只登记一次，拒绝空监听。 */
     public void addListener(LongPressListener listener) {
-        listeners.add(listener);
+        Objects.requireNonNull(listener, "Long press listener is required");
+        if (!listeners.contains(listener, true)) listeners.add(listener);
     }
 
+    /** 最后一个监听退出后清理待触发计时，避免回调新会话。 */
     public void removeListener(LongPressListener listener) {
         listeners.removeValue(listener, true);
+        if (!hasListeners()) cancelTasks();
     }
 
-    @Override
-    public boolean keyDown(int keycode) {
-        // 如果该键已有任务，先取消（防止重复）
-        cancelTask(keycode);
+    /** 输入管理器据此决定是否需要在输入链中保留本处理器。 */
+    boolean hasListeners() { return listeners.notEmpty(); }
 
-        // 创建延迟任务，到达阈值后触发长按
+    /** 只有存在监听且全局允许输入时才接受本次按下。 */
+    @Override public boolean keyDown(int keycode) {
+        cancelTask(keycode);
+        if (!InputManager.ENABLE || !hasListeners()) return false;
         Timer.Task task = new Timer.Task() {
-            @Override
-            public void run() {
-                // 触发长按回调
-                for (LongPressListener listener : listeners) {
-                    if (InputManager.ENABLE){
-                        listener.onLongPress(keycode);
-                    }
-                }
-                // 任务执行后从Map中移除（表示长按已触发）
+            /** 只执行仍属于本次按下的任务，回调前先摘除，允许监听器自行退出。 */
+            @Override public void run() {
+                if (keyTasks.get(keycode) != this) return;
                 keyTasks.remove(keycode);
+                notifyListeners(keycode, true);
             }
         };
-        // 调度任务，延迟 LONG_PRESS_DURATION 毫秒后执行
-        Timer.schedule(task, LONG_PRESS_DURATION / 1000f);
         keyTasks.put(keycode, task);
+        Timer.schedule(task, LONG_PRESS_SECONDS);
         return true;
     }
 
-    @Override
-    public boolean keyUp(int keycode) {
+    /** 只对本处理器接受且尚未触发长按的按键派发短按；未知释放不阻断其它处理器。 */
+    @Override public boolean keyUp(int keycode) {
         Timer.Task task = keyTasks.remove(keycode);
-        if (task != null) {
-            // 任务还存在，说明长按尚未触发，取消任务并视为短按
-            task.cancel();
-            for (LongPressListener listener : listeners) {
-                if (InputManager.ENABLE){
-                    listener.onShortPress(keycode);
-                }
-            }
-        }
-        // 如果 task == null，说明长按已经触发过了，此时抬起不做额外处理（或可触发“释放”事件，视需求而定）
+        if (task == null) return false;
+        task.cancel();
+        notifyListeners(keycode, false);
         return true;
     }
 
-    // 取消某个按键的任务
+    /** 使用快照遍历并复核登记状态，回调删除监听器或清空输入链时不误调已退出对象。 */
+    private void notifyListeners(int keycode, boolean longPress) {
+        LongPressListener[] snapshot = listeners.begin();
+        try {
+            int size = listeners.size;
+            for (int i = 0; i < size && InputManager.ENABLE; i++) {
+                LongPressListener listener = snapshot[i];
+                if (!listeners.contains(listener, true)) continue;
+                if (longPress) listener.onLongPress(keycode);
+                else listener.onShortPress(keycode);
+            }
+        } finally { listeners.end(); }
+    }
+
+    /** 清空待触发按键和监听；之后重新登记可正常使用。 */
+    public void clear() { cancelTasks(); listeners.clear(); }
+
+    /** 取消所有计时，不触发任何短按或长按回调。 */
+    private void cancelTasks() {
+        for (Timer.Task task : keyTasks.values()) task.cancel();
+        keyTasks.clear();
+    }
+
+    /** 重复按下同一键时只保留最后一次计时。 */
     private void cancelTask(int keycode) {
         Timer.Task task = keyTasks.remove(keycode);
-        if (task != null) {
-            task.cancel();
-        }
+        if (task != null) task.cancel();
     }
-
-    // 其他方法空实现（触摸等）
-    @Override public boolean keyTyped(char character) { return false; }
-    @Override public boolean touchDown(int screenX, int screenY, int pointer, int button) { return false; }
-    @Override public boolean touchUp(int screenX, int screenY, int pointer, int button) { return false; }
-    @Override public boolean touchCancelled(int screenX, int screenY, int pointer, int button) { return false; }
-    @Override public boolean touchDragged(int screenX, int screenY, int pointer) { return false; }
-    @Override public boolean mouseMoved(int screenX, int screenY) { return false; }
-    @Override public boolean scrolled(float amountX, float amountY) { return false; }
 }

@@ -31,8 +31,10 @@ public class InputProcess extends SerializeComponent implements Disposable {
 
     public InputProcessing processing;
 
+    /** 重载前解绑旧输入监听；构造失败时不保留上一份处理器。 */
     @Override
     public void reload(World world, EntityDatum entityDatum) {
+        dispose();
         super.reload(world, entityDatum);
 
         ReflectionManager reflectionManager = ReflectionManager.getInstance();
