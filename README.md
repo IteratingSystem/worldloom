@@ -1661,3 +1661,19 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 发布补充（4.15.4）：JitPack先预热Wrapper，官方分发下载失败时依次回退华为云、腾讯镜像（仅改远程临时构建副本的URL），最多三个源；Wrapper始终以`distributionSha256Sum`校验Gradle官方公布的SHA256。正式build/publish只执行一次，编译和检查失败直接报告。4.15.2/4.15.3均在官方Gradle分发下载处遇HTTP 504，未执行代码编译；不移动旧标签，使用后续修订发布。本地默认仍用官方分发URL。
 
 形状隔离补充（4.15.5）：`ShapeUtils.getShapeByMapObject`两个缩放入口先复制多边形顶点，再创建原生形状；重复实例化同一图块不再累乘修改源顶点。调用方仍负责释放返回的Shape，既有形状缩放规则不变。
+
+## 28. 像素色板与索引对比（4.20.0）
+
+`org.worldloom.utils.PixelPalette` 是无GL、无ECS的纯像素工具，用于绘画、图鉴、换色预览等：
+
+```java
+PixelPalette result = PixelPalette.extract(rgba8888, 48, 12, 128);
+int[] palette = result.colors();   // 不透明RGBA8888色板，独立副本
+int[] target = result.indices();   // 保留原像素顺序，透明位置为-1
+int correct = PixelPalette.countMatches(target, paintedIndices);
+```
+
+- `extract` 按RGB整数步长量化，按像素权重进行确定性中位切分，再映射最近色；删除未使用颜色，不改变尺寸或裁掉轮廓。相同输入在不同电脑产生相同结果。
+- 输入1～1048576个像素，步长1～255、色数上限1～256、透明阈值1～255；低于阈值的像素不参与颜色提取。全透明图返回空色板及全-1索引；调用方决定是否允许空图。
+- `countMatches` 仅比较**同一色板**下的索引，忽略目标透明区域，-1可表示未填。返回命中数，分母、完成门槛、难度和价格由业务决定。相似原色应在提取阶段统一映射，不能对已经使用不同色板的索引直接判分。
+- 不创建或释放Pixmap/Texture，不解析JSON，不维护缓存和画作数据；资源采样、快照DTO和生命周期由调用方负责。返回数组可自行保存，后续资源或算法升级不会修改已有快照。
