@@ -101,33 +101,35 @@ public class RenderFrameSystem extends DeferredEntityProcessingSystem {
         updateBatch();
         ShaderComp shader = mShaderComp.has(entityId) ? mShaderComp.get(entityId) : null;
         ShaderProgram program = shader == null ? null : shader.shaderProgram;
+        if (program == null) {
+            drawFrame(render, pos, height);
+            return;
+        }
         ShaderProgram previous = batch.getShader();
         // 先用旧程序提交上一批顶点，再允许回调绑定或改写Uniform；同程序也必须隔离参数。
-        if (program != null) batch.flush();
+        batch.flush();
         batch.setShader(program);
         try {
-            if (program != null) {
-                if (shader.shaderUniforms != null) shader.shaderUniforms.setUniforms(world.getDelta());
-                com.badlogic.gdx.Gdx.gl.glActiveTexture(com.badlogic.gdx.graphics.GL20.GL_TEXTURE0);
-            }
-            if (render.textureSheets != null && !render.textureSheets.isEmpty()) {
-                for (int i = 0; i < render.textureSheets.size; i++) {
-                    TextureRegion region = render.textureSheets.get(i);
-                    if (region != null && region.getTexture() != null) {
-                        RenderGeometry.draw(batch, render, pos, region, height, i, worldScale);
-                    }
-                }
-            } else {
-                RenderGeometry.draw(batch, render, pos, render.keyframe, height, 0, worldScale);
-            }
+            if (shader.shaderUniforms != null) shader.shaderUniforms.setUniforms(world.getDelta());
+            com.badlogic.gdx.Gdx.gl.glActiveTexture(com.badlogic.gdx.graphics.GL20.GL_TEXTURE0);
+            drawFrame(render, pos, height);
         } finally {
             // 回调可绑定辅助纹理；恢复0号槽，并在恢复程序前提交本实体。
-            if (program != null) {
-                com.badlogic.gdx.Gdx.gl.glActiveTexture(com.badlogic.gdx.graphics.GL20.GL_TEXTURE0);
-                batch.flush();
-            }
+            com.badlogic.gdx.Gdx.gl.glActiveTexture(com.badlogic.gdx.graphics.GL20.GL_TEXTURE0);
+            batch.flush();
             batch.setShader(previous);
         }
+    }
+
+    /** 普通精灵保持现有批处理；自定义Shader只在外层隔离参数，共用相同逐层绘制逻辑。 */
+    private void drawFrame(Render render, Pos pos, float height) {
+        if (render.textureSheets != null && !render.textureSheets.isEmpty()) {
+            for (int i = 0; i < render.textureSheets.size; i++) {
+                TextureRegion region = render.textureSheets.get(i);
+                if (region != null && region.getTexture() != null)
+                    RenderGeometry.draw(batch, render, pos, region, height, i, worldScale);
+            }
+        } else RenderGeometry.draw(batch, render, pos, render.keyframe, height, 0, worldScale);
     }
 
     /** World.dispose不逐组件回收GL资源，因此统一释放仍然存活的实体程序。 */

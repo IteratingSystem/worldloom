@@ -596,7 +596,7 @@ public class HurtUniforms extends ShaderUniforms {
 
 然后把 `ShaderComp.uniformSimpleName` 设为 `HurtUniforms`。该类必须位于 `ReflectionManager` 配置的游戏根包下。
 
-4.19.4起，实体Uniform回调在Batch完成旧绘制、切换到目标程序后执行，同程序的不同参数也隔离提交。回调仅设置本实体的表现参数，不能切换Batch、持有它或承担游戏逻辑计时；辅助纹理使用非0号槽，引擎在绘制前恢复0号槽。回调或绘制异常时仍恢复原Batch程序。`ShaderComp`独占自己编译的程序，重载先释放旧程序；源码缺失、编译或回调构造失败会清空结果并回退普通绘制。通过`EntityDeleter`删除、直接`world.delete`/移除ShaderComp及世界退出均回收程序，重复释放安全；移除Render、隐藏或切图不会释放仍挂载的ShaderComp。源纹理与Shader源码仍由应用资源容器持有。
+4.19.4起，实体Uniform回调在Batch完成旧绘制、切换到目标程序后执行，同程序的不同参数也隔离提交。4.19.5补齐普通实体快速路径：无自定义程序时直接绘制，不切换Shader或额外flush。回调仅设置本实体的表现参数，不能切换Batch、持有它或承担游戏逻辑计时；辅助纹理使用非0号槽，引擎在绘制前恢复0号槽。回调或绘制异常时仍恢复原Batch程序。`ShaderComp`独占自己编译的程序，重载先释放旧程序；源码缺失、编译或回调构造失败会清空结果并回退普通绘制。通过`EntityDeleter`删除、直接`world.delete`/移除ShaderComp及世界退出均回收程序，重复释放安全；移除Render、隐藏或切图不会释放仍挂载的ShaderComp。源纹理与Shader源码仍由应用资源容器持有。
 
 ### 10.3 Shader 瓦片层
 
