@@ -21,6 +21,15 @@ public final class OpaqueRegionCache {
     /** 世界释放或纹理重载时清空CPU引用，共享纹理由原所有者释放。 */
     public void clear() { textures.clear(); }
 
+    /** 纹理改写或释放前移除其CPU轮廓，并返回需要同步释放的已生成几何。 */
+    public java.util.List<ShadowVolumeGeometry> invalidate(Texture texture) {
+        TexturePixels removed = textures.remove(texture);
+        java.util.List<ShadowVolumeGeometry> volumes = new java.util.ArrayList<>();
+        if (removed != null) for (RegionData region : removed.regions.values())
+            if (region.volume != null) volumes.add(region.volume);
+        return volumes;
+    }
+
     /** 返回Y轴向上的不透明边界；全透明或不可读区域保留整框回退。 */
     public Bounds get(TextureRegion region) { return regionData(region).bounds; }
 
@@ -72,9 +81,11 @@ public final class OpaqueRegionCache {
         TexturePixels result;
         try {
             if (data == null || data.getType() != TextureData.TextureDataType.Pixmap)
-                throw new IllegalStateException("纹理不支持Pixmap读取");
+                throw new IllegalStateException("Texture has no readable Pixmap data");
             if (!data.isPrepared()) data.prepare();
             pixmap = data.consumePixmap();
+            if (pixmap == null || pixmap.isDisposed())
+                throw new IllegalStateException("Texture pixel data has been disposed");
             BitSet opaque = new BitSet(Math.multiplyExact(pixmap.getWidth(), pixmap.getHeight()));
             for (int y = 0; y < pixmap.getHeight(); y++)
                 for (int x = 0; x < pixmap.getWidth(); x++)
@@ -82,10 +93,10 @@ public final class OpaqueRegionCache {
                         opaque.set(y * pixmap.getWidth() + x);
             result = new TexturePixels(pixmap.getWidth(), pixmap.getHeight(), opaque);
         } catch (RuntimeException exception) {
-            if (Gdx.app != null) Gdx.app.log(TAG, "无法读取阴影轮廓，沿用切片投影：" + exception.getMessage());
+            if (Gdx.app != null) Gdx.app.log(TAG, "Cannot read shadow pixels; using slice projection: " + exception.getMessage());
             result = new TexturePixels(texture.getWidth(), texture.getHeight(), null);
         } finally {
-            if (pixmap != null && data.disposePixmap()) pixmap.dispose();
+            if (pixmap != null && !pixmap.isDisposed() && data.disposePixmap()) pixmap.dispose();
         }
         textures.put(texture, result);
         return result;

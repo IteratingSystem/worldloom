@@ -66,6 +66,17 @@ public class TopDownShadowSystem extends BaseSystem {
     private final OpaqueRegionCache opaqueRegions = new OpaqueRegionCache();
     private final ObjectMap<ShadowVolumeGeometry, Mesh> volumeMeshes = new ObjectMap<>();
     private final com.badlogic.gdx.utils.Array<com.badlogic.gdx.utils.Disposable> renderResources = new com.badlogic.gdx.utils.Array<>();
+
+    /** 主线程在动态纹理改写或释放前调用；只释放派生轮廓和网格，不拥有调用方纹理。 */
+    public void invalidateTexture(Texture texture) {
+        for (ShadowVolumeGeometry geometry : opaqueRegions.invalidate(texture)) {
+            Mesh mesh = volumeMeshes.remove(geometry);
+            if (mesh != null) {
+                renderResources.removeValue(mesh, true);
+                mesh.dispose();
+            }
+        }
+    }
     private ShadowBuffers buffers;
     private int pointBufferWidth, pointBufferHeight;
 
