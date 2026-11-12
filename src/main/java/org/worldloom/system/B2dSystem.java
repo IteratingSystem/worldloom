@@ -55,6 +55,8 @@ public class B2dSystem extends BaseSystem {
                 throw new IllegalArgumentException("物理地图不存在: " + mapId);
             World physics = createWorld();
             mapWorlds.put(mapId, physics);
+            // 单图入口在创建瓦片碰撞时也会查询当前World，必须先完成绑定。
+            if (!isResidentMode()) box2DWorld = physics;
             tileColliders.put(mapId, new Bag<>());
             createTileCollider(mapId);
         }
