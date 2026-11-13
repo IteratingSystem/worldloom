@@ -1000,7 +1000,7 @@ GameSnapshot
 └── systemProps[systemClassName]    可序列化系统属性
 ```
 
-新游戏并不是只创建当前地图。`startNewGame(initialMap)` 会从 `MapManager` 的初始模板复制所有地图的 `EntityData`，因此尚未进入的地图也有独立初始状态。
+新游戏并不是只创建当前地图。`startNewGame(initialMap)` 会从 `MapManager` 的初始模板复制所有地图的 `EntityData`，因此尚未进入的地图也有独立初始状态。整图模板仍通过JSON往返产生独立镜像，与存档保持同一加载来源；单个模板实例化另用`copyEntityDatum`隔离可变字段。
 
 ### 15.2 保存
 
@@ -1010,8 +1010,8 @@ String json = engine.createSaveJson();
 
 `createSaveJson` 会先：
 
-1. 从当前 ECS World 序列化当前地图全部实体。
-2. 把结果覆盖到 `entityData[currentMap]`。
+1. 捕获当前ECS的可保存实体。单地图模式覆盖`entityData[currentMap]`；常驻模式按`MapMembership.mapId`分组覆盖所有配置的正式地图。
+2. 常驻模式连空地图也覆盖，防止已删除实体被旧镜像恢复；缺失或非法地图归属直接报错。模板图不作为运行地图捕获。
 3. 采集所有 `@SerializeSystem` 系统中的 `@SerializeParam` 公共字段。
 4. 序列化完整 `GameSnapshot`。
 
@@ -1028,7 +1028,7 @@ WorldloomEngine engine = Worldloom.engineBuilder()
 
 读档的正确含义是“先用 JSON 替换会话状态，再创建新的 ECS World”。不要先创建 World 再调用 `loadSaveJson`，否则地图系统已经按旧状态初始化。
 
-本地未发布的存档修复（基于 4.2.8）：
+当前版本的存档与实体恢复契约：
 
 - `Pos` 优先使用镜像中明确提供的 `x/y`，缺少某一轴时才回退到 Tiled 坐标。这也适用于运行时修改过坐标的地图模板、掉落物和预制体；零坐标有效。
 - `B2dBody.angle` 保存物理角度（弧度），重建 Body 时恢复。旧存档缺少角度时仍为零。
@@ -1044,7 +1044,7 @@ WorldloomEngine engine = Worldloom.engineBuilder()
 
 `B2dBody.getContactFixtures` 只返回实际接触；Box2D broadphase 保留的近邻候选不算交互接触。引擎物理世界由 `DefContactListener` 在 begin/end 回调中维护各夹具的接触索引，查询不再扫描整图 Contact，也不保留原生 Contact；同一对链条夹具的多个接触按计数合并。销毁夹具、停用刚体与跨图迁移沿用 Box2D 的结束回调解除引用，退出世界后清空索引。不要替换引擎世界的 ContactListener；业务仍通过夹具的 `DefFixData.listener` 接入。独立创建、未交给 B2dSystem 管理的世界保留即时扫描行为。
 
-无窗口回归检查：`./gradlew test`。`EntityRestoreTest` 仅使用 ECS、原生 Box2D 和模拟纹理，不创建桌面后端或游戏窗口。
+引擎检查使用`./gradlew.bat build`；涉及实体恢复时另外验证真实镜像的保存/恢复、引用重映射及Box2D生命周期。编译和数据检查不能替代游戏内验收，不把不存在的恢复测试当作验证证据。
 
 ### 15.4 保存自定义系统字段
 
@@ -1076,29 +1076,16 @@ int[] carried = {playerId, companionId};
 portal.teleport(carried, playerId, true);
 ```
 
-`switchMap = true` 的事务顺序：
+Portal根据运行模式采用不同事务，不应混用两种生命周期：
 
-1. 游戏代码调用 `portal.teleport(..., true)`。
-2. `MapTransitionSystem` 捕获当前地图的实体快照和系统状态。
-3. 从来源地图快照中移除需要携带的实体。
-4. 保留携带实体，删除当前 ECS World 中的其他实体。
-5. 切换 Tiled 地图、渲染器和瓦片碰撞。
-6. 根据目标地图快照重建目标地图实体。
-7. 把携带实体移动到 `targetPosEntity` 对应的位置。
-8. 把相机跳转到 `playerEntityId` 对应实体的位置。
-9. 把当前地图更新为 `targetMap`。
+| 模式 | 实体与物理 | `switchMap` 的含义 |
+| --- | --- | --- |
+| 常驻地图（Island当前使用） | 正式地图的ECS实体一直保留；每图独立Box2D World，跨图迁移只替换迁移实体的Body，同图移动保留Body | true迁移后切换观察图/渲染及相机；false仅迁移实体，后台继续按配置更新 |
+| 单地图 | 先捕获来源图快照；true保留携带实体、删除其余运行实体并构建目标图；false把携带实体数据移入目标快照并删除其运行实体 | true切换当前地图；false仍观察来源图，目标数据等待该图加载 |
 
-目标地图与当前地图相同时，不重建世界，只把携带实体移动到 `targetPosEntity`。
+常驻Portal在所有物理World解锁的安全点执行：先查目标图本地落脚Tag，预检整组实体、名称冲突、坐标与落点，准备目标Body，全部成功后再提交归属/位置/物理迁移，必要时切换观察图。准备失败释放暂存资源、保留来源状态；落脚Tag不存在时记录错误并取消。`MapAttachment`附属实体随宿主迁移，普通资产`Owner`不自动带走。地图迁移保留ECS身份，运行期ID仍不能当成存档稳定身份；详情见§24。
 
-`switchMap = false` 表示只迁移数据：实体会从当前地图快照和 ECS World 中删除，其最新快照被加入目标地图，但当前地图、渲染器和相机不切换。适合把 NPC、掉落物等送往其他地图。
-
-关键约束：
-
-- `entityIds` 必须包含所有需要跨图保留的运行时实体。
-- `playerEntityId` 仅用于切图后相机跳转。
-- 携带实体应有 `Pos`；有 `B2dBody` 时位置会同步到 Body。
-- 找不到目标 Tag 时实体会被放到 `(0, 0)` 并记录错误日志。
-- 目标地图快照由 `GameSnapshotManager.getEntityData(targetMap)` 提供，不存在时会创建空数据。
+单地图模式同图传送只改变携带实体位置；目标快照由`GameSnapshotManager.getEntityData(targetMap)`提供。需要随行的实体必须明确传入`entityIds`，`playerEntityId`用于切图后相机；实体应有`Pos`，有`B2dBody`时同步物理位置。游戏不要自行拼接删除/重建步骤。
 
 ## 16. Worldloom 安装的系统
 
@@ -1204,6 +1191,9 @@ portal.teleport(carried, playerId, true);
 - 门、剧情和交互代码：只调用 `Portal.teleport(...)`，不自行拼接删除、建图、重建和相机步骤。
 - 自定义组件：只声明可保存数据与 `reload` 生命周期，不直接管理整个 `GameSnapshot`。
 - 自定义系统：需要跨存档的数据统一使用 `@SerializeSystem` + `@SerializeParam`。
+- UI按玩法聚合面板、画布和本地表现，共用库存部件单独复用；页面只发送命令，不直接改正式库存。
+- 命令通道负责身份/版本屏障、等待与回包，玩法执行器负责校验及事务；协作者不再各自创建网络通道或状态副本。
+- ECS系统保留生命周期和权威入口；内部职责有独立状态边界时提取同包协作者，不为转发增加新的Manager层。组件/可序列化系统类名属于Tiled及存档契约，不能仅为目录整理随意改名。
 
 这样，Tiled 负责静态初始定义，`GameSnapshotManager` 负责会话数据，`MapTransitionSystem` 负责切图事务，游戏层只负责触发流程和持久化 JSON。
 
@@ -1635,7 +1625,8 @@ MapAreas/MapArea位于org.worldloom.map，MapAreaSystem位于org.worldloom.syste
 动态纹理（4.21.0）：参与阴影的运行时纹理必须保留可读Pixmap，例如使用`new Texture(new PixmapTextureData(pixels, Pixmap.Format.RGBA8888, false, false, true))`，纹理及pixels由调用方共同持有并释放。改写或释放纹理前，在主线程调用`world.getSystem(TopDownShadowSystem.class).invalidateTexture(texture)`，同步移除该纹理的CPU轮廓和GPU投影网格，随后再释放纹理及Pixmap；该接口不释放调用方纹理。没有安装阴影系统时跳过通知。引擎遇到已释放的像素会使用切片回退，不能再读取原生悬空指针。
 
 - `RenderResources.createScreenQuad()`创建位置2维+UV2维的全屏四边形，按`GL_TRIANGLE_FAN`绘制；`createSoftMask(size, solidRadius)`创建白色径向软遮罩，半径占比范围`[0,1)`。每次返回独立GL资源，创建方在GL线程使用并释放；工厂不缓存资源，不接管AssetManager纹理。
-- `TopDownShadowSystem`保留ECS筛选、绘制顺序、阈值与合成；透明度扫描交给`OpaqueRegionCache`，连续太阳轮廓体交给`ShadowVolumeGeometry`。旧`SunShadowGeometry`保留公开API，但正式管线不再创建旧太阳阴影带Shader或Mesh。缓存保留区域范围（4.13.0起也缓存透明度与轮廓），`clear()`不释放共享纹理；投影数组由实例复用，只读且在下次计算前消费。
+- `TopDownShadowSystem`保留ECS筛选、投影算法、绘制顺序与资源所有权；透明度扫描交给`OpaqueRegionCache`，连续太阳轮廓体交给`ShadowVolumeGeometry`。旧`SunShadowGeometry`保留公开API，但正式管线不再创建旧太阳阴影带Shader或Mesh。缓存保留区域范围（4.13.0起也缓存透明度与轮廓），`clear()`不释放共享纹理；投影数组由实例复用，只读且在下次计算前消费。
+- 4.22.0起，内部按阶段拆为`ShadowView`（阴影相机纹素对齐、合成视口参数及GL纹理状态恢复）、`ShadowPointLights`（观察图灯光生命周期、逐灯绘制和异常后恢复）、`ShadowCompositePass`（日光普通混合、环境光后的点光加法合成）及`ShadowBuffers`（可重建FBO集合）。这些协作者均不接管共享纹理，Shader/Mesh/RayHandler仍由系统统一逆序释放；公开入口与阴影接收算法保持一致。
 - 阴影固定资源按创建顺序登记、逆序释放；可重建FBO单独登记，初始化中断也能回收已成功创建的部分，重复释放不再销毁同一资源。纹理内容原位重载时需清空透明度缓存，普通切图复用缓存。
 
 
