@@ -269,6 +269,8 @@ ObjectMap<String, TiledMap> maps = assets.getObjects(".tmx", TiledMap.class);
 5. 类属性内字段名必须与组件的公共字段名一致。
 6. 只有带 `@SerializeParam` 的字段会进入实体快照和存档。
 
+`@SerializeParam(tiled = false)`用于只保存、不允许地图编辑的状态，例如当前加工进度或会话令牌。默认`tiled = true`，现有参数用法不变；`false`字段不进入地图初始镜像，实体创建时保留Java字段初值，运行快照与读档仍完整读写。Tiled类型定义应省略此类字段，地图显式传入会在配置边界报错；`readComponent`同样拒绝这些输入。单实体可调参数的默认值仍维护在Tiled类型中，不用此标记把参数默认值搬进代码。
+
 Worldloom 使用 `fromMap + mapObjectId` 重新关联实体和原始 Tiled `MapObject`。Artemis 运行时 `entityId` 在重建后可能改变，不应作为跨存档的业务主键。
 
 Worldloom 仓库中的 `src/main/resources/propertytypes.json` 是纯引擎类型源，只声明 Worldloom 组件及其依赖类型，不包含任何游戏业务组件。游戏项目供 Tiled 导入的文件应是“Worldloom 类型 + 游戏类型”的并集：升级引擎时先同步引擎类型，再保留或追加游戏自己的类型。Tiled 项目只导入游戏侧这一个完整文件。

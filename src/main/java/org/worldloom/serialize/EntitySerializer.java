@@ -61,6 +61,7 @@ public class EntitySerializer {
                 String key = keys.next();
                 Field field = findField(type, key);
                 if (field == null || !field.isAnnotationPresent(SerializeParam.class)
+                    || !field.getAnnotation(SerializeParam.class).tiled()
                     || field.isAnnotationPresent(EntityReference.class))
                     throw new IllegalArgumentException("Invalid configuration field: " + type.getSimpleName() + "." + key);
                 Class<?> valueType = field.getType();
@@ -111,7 +112,8 @@ public class EntitySerializer {
 
                 property.getKeys().forEachRemaining(key -> {
                     Field field = findField(compClass, key);
-                    if (field == null || !field.isAnnotationPresent(SerializeParam.class))
+                    if (field == null || !field.isAnnotationPresent(SerializeParam.class)
+                        || !field.getAnnotation(SerializeParam.class).tiled())
                         throw new IllegalArgumentException("Unknown serializable field: " + simpleName + "." + key
                             + ", map: " + mapName + ", entity: " + entityName);
                 });
@@ -119,6 +121,7 @@ public class EntitySerializer {
                 Field[] fields = SERIALIZED_FIELDS.get(compClass);
                 for (int i = 0; i < fields.length; i++) {
                     Field field = fields[i];
+                    if (!field.getAnnotation(SerializeParam.class).tiled()) continue;
                     Class<?> type = field.getType();
                     Property compProp = new Property();
                     compProp.key = field.getName();
