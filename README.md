@@ -1119,7 +1119,7 @@ Portal根据运行模式采用不同事务，不应混用两种生命周期：
 - 动画帧碰撞体仅在动作、帧号、翻转、身体/形状集合替换或动作重启时重建；同一帧保留接触。玩法不能依赖每个游戏帧销毁夹具制造重复 `beginContact`；伤害间隔由业务系统管理。重载形状时替换 `keyframeFixSetups` 集合，不原位修改已有定义。
 - Z 排序保留完整浮点深度差，避免小于1的差值被当成相等。
 
-- `JsonManager`：统一的 LibGDX JSON 对象映射。`toJson` / `fromJson` / `getJson` 沿用主线程存档序列化策略，保留多态类型信息。4.7.0新增`readConfig(ConfigData.class, file)`和`readConfig(ConfigData.class, text)`：将配置直接映射为字段明确、可无参构造的DTO，拒绝未知字段、空根节点及多态类型元信息；文件按UTF-8读取，错误包含文件路径。配置解析器按线程复用且不对外暴露，与存档解析器隔离，避免配置规则/并发解析影响存档；字段范围、版本、唯一性和引用由业务加载后校验。字段名保持JSON契约，动态字典必须指定值类型，Java record先用DTO承接再转换。网络协议继续使用带协议白名单的专用编解码器。
+- `JsonManager`：统一的 LibGDX JSON 对象映射。`toJson` / `fromJson` / `getJson` 沿用主线程存档序列化策略，保留多态类型信息。4.7.0新增`readConfig(ConfigData.class, file)`和`readConfig(ConfigData.class, text)`：将配置直接映射为字段明确、可无参构造的DTO，拒绝未知字段、空根节点及多态类型元信息；文件按UTF-8读取，错误包含文件路径。4.23.0起，数值字段必须使用JSON数字，布尔字段必须使用true/false；整数允许精确的`2.0`/`2e0`，但拒绝小数截断与byte/short/int/long溢出，float/double必须有限，基本类型不允许显式null。错误包含嵌套字段/数组下标。配置解析器按线程复用且不对外暴露，与存档解析器隔离，避免配置规则/并发解析影响存档；字段范围、版本、唯一性和引用由业务加载后校验。字段名保持JSON契约，动态字典必须指定值类型，Java record先用DTO承接再转换。网络协议继续使用带协议白名单的专用编解码器。
 - `SkinManager.getSkin(path)`：加载或获取 Scene2D Skin。
 - `ShaderManager`：读取已加载的 vertex/fragment shader 文本。
 - `ShapeUtils`：从 Tiled `MapObject` 创建 Box2D Shape，并支持水平翻转。
