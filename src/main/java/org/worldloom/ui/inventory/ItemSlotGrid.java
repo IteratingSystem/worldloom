@@ -104,6 +104,11 @@ public class ItemSlotGrid extends BaseEcsUI {
     }
 
 
+    /** 默认从Tiled源对象解析图标；游戏可覆写以支持动态图画等个体内容，不修改SlotDatum。 */
+    protected com.badlogic.gdx.scenes.scene2d.utils.Drawable resolveIcon(SlotDatum datum) {
+        return SlotIcons.resolve(datum);
+    }
+
     /** 重建格子前注销本视图的旧拖拽绑定，不影响共用同一拖拽管理器的其他视图。 */
     public void rebuild() {
         if (slotData == null) {

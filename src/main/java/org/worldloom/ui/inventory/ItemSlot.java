@@ -168,13 +168,16 @@ public class ItemSlot extends WidgetGroup {
         return slotDatum;
     }
 
+    /** 绑定数据并由所属网格解析图标；独立格子默认使用Tiled模板。 */
     public void setSlotDatum(SlotDatum slotDatum) {
-        if (slotDatum == null){
-            slotDatum = new SlotDatum();
-        }
-        this.slotDatum = slotDatum;
-        setIcon(slotDatum.getDrawable());
-        setAmount(slotDatum.stackAmount);
+        setSlotDatum(slotDatum, invUI == null ? SlotIcons.resolve(slotDatum) : invUI.resolveIcon(slotDatum));
+    }
+
+    /** 绑定已解析图标，适用于交易篮等独立显示格；null图标会隐藏旧图片。 */
+    public void setSlotDatum(SlotDatum slotDatum, Drawable drawable) {
+        this.slotDatum = slotDatum == null ? new SlotDatum() : slotDatum;
+        setIcon(drawable);
+        setAmount(this.slotDatum.stackAmount);
     }
 
     /** 选中状态 */

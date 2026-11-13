@@ -899,7 +899,7 @@ events.dispatch(only);
 
 相关类：
 
-- `SlotDatum`：物品 ID、堆叠数量、最大堆叠、类型和图标等格子数据。
+- `SlotDatum`：物品 ID、堆叠数量、最大堆叠、类型及实体镜像等纯格子数据，不缓存图标资源。
 - `ItemSlot`：单个可选中、可禁用的格子 Actor。
 - `ItemSlotGrid`：二维格子、拖放、合并、交换、来源限制和所有者管理。
 
@@ -915,6 +915,7 @@ grid.rebuild();
 
 常用扩展点：
 
+- `resolveIcon`：定制当前物品的显示图标，不改变库存数据。
 - `onDragStart`：定制拖动载荷。
 - `onDrop`：定制格子接收行为，默认同物品合并、不同物品交换。
 - `onDragStop`：处理拖到空白处。
@@ -924,7 +925,7 @@ grid.rebuild();
 
 调用 `setSlotData` 后必须调用 `rebuild()` 才会生成格子 Actor。
 
-`rebuild()` 会注销本视图旧格子的拖拽 Source/Target，不影响共用同一 `DragAndDrop` 的其他库存。自定义空间布局重写 `rebuild()` 时，先调用受保护的 `clearSlots()`，再生成布局并逐格 `enableDrag(slot)`；同一个格子重复启用不会重复注册。允许空网格和不等长行。`SlotDatum.getDrawable()` 按源地图/对象编号缓存包装，运行时缓存不写进存档。
+`rebuild()` 会注销本视图旧格子的拖拽 Source/Target，不影响共用同一 `DragAndDrop` 的其他库存。自定义空间布局重写 `rebuild()` 时，先调用受保护的 `clearSlots()`，再生成布局并逐格 `enableDrag(slot)`；同一个格子重复启用不会重复注册。允许空网格和不等长行。4.22.0起，图标由显示层解析：覆写`ItemSlotGrid.resolveIcon(SlotDatum)`可接入游戏物品目录或动态画像；自定义格子先`setInvUI(this)`再绑定数据。独立格子可调用`slot.setSlotDatum(datum, drawable)`直接绑定已经解析的图标，null会隐藏旧图。默认显示适配器仍从Tiled源对象取图。`SlotDatum.getDrawable()`仅保留为弃用兼容入口，正式格子不调用它，数据对象不持有Drawable/纹理。解析在绑定/刷新数据时执行，不在draw中执行；源纹理由资源管理器持有。
 
 4.19.4起，`onDragStart`拒绝空格/禁用格，并将`DragItem(grid,row,column)`放入Payload.object。拖放及外部丢弃通过`ItemSlotGrid.sourceSlot(source,payload)`读取来源，不从事件目标的父节点推测格子；旧的ItemSlot来源在未提供明确载荷时仍兼容。自定义Source可以使用其它Actor并携带同样的DragItem；未知来源被拒绝，不会强转崩溃。分页未创建的行/格和越界`getSlot`返回null，`setSelectOnly`跳过空行/格。
 
