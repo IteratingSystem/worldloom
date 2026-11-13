@@ -69,7 +69,7 @@ public class AudioSystem extends BaseSystem {
             throw new IllegalArgumentException("config cannot be null");
         }
         if (!Float.isFinite(worldScale) || worldScale <= 0f)
-            throw new IllegalArgumentException("声音世界比例必须为有限正数");
+            throw new IllegalArgumentException("Audio world scale must be finite and positive");
         this.worldScale = worldScale;
         this.config = config;
         masterVolume = config.getMasterVolume();
@@ -93,7 +93,7 @@ public class AudioSystem extends BaseSystem {
             if (instance.sourceEntityId >= 0) {
                 if (!updateSourceFromEntity(instance)) {
                     if (instance.looping || instance.music != null) {
-                        instance.stop();
+                        stopInstance(instance);
                         toRemove.add(instance.handle);
                         continue;
                     }
@@ -437,7 +437,7 @@ public class AudioSystem extends BaseSystem {
         if (progress >= 1f) {
             instance.fadeDuration = 0f;
             if (instance.stopAfterFade) {
-                instance.stop();
+                stopInstance(instance);
                 toRemove.add(instance.handle);
             }
         }
@@ -595,13 +595,11 @@ public class AudioSystem extends BaseSystem {
         return new VolumePan(volume, pan);
     }
 
+    /** 先移除句柄和资源索引；后端停止失败也不会留下不可回收的占位。 */
     private void removeInstance(long handle, boolean stop) {
         AudioInstance instance = instances.remove(handle);
         if (instance == null) {
             return;
-        }
-        if (stop) {
-            instance.stop();
         }
         if (instance.sound != null) {
             List<Long> handles = soundHandlesByPath.get(instance.path);
@@ -611,6 +609,16 @@ public class AudioSystem extends BaseSystem {
                     soundHandlesByPath.remove(instance.path);
                 }
             }
+        }
+        if (stop) stopInstance(instance);
+    }
+
+    /** 隔离单个后端的停止异常，保证其它音频和世界释放继续执行。 */
+    private void stopInstance(AudioInstance instance) {
+        try {
+            instance.stop();
+        } catch (RuntimeException exception) {
+            logError("Failed to stop audio: " + instance.path + " (handle " + instance.handle + ")", exception);
         }
     }
 
@@ -649,14 +657,16 @@ public class AudioSystem extends BaseSystem {
         }
     }
 
+    /** 停止所有实例并清空运行期索引；不释放资源管理器拥有的共享音频。 */
     @Override
     protected void dispose() {
         for (AudioInstance instance : instances.values()) {
-            instance.stop();
+            stopInstance(instance);
         }
         instances.clear();
         soundHandlesByPath.clear();
         completedMusicHandles.clear();
+        completedInstances.clear();
     }
 
     private static final class AudioInstance {
