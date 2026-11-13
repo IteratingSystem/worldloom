@@ -19,7 +19,6 @@ import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.math.Vector3;
-import com.badlogic.gdx.utils.BufferUtils;
 import com.badlogic.gdx.utils.IntArray;
 import com.badlogic.gdx.utils.ObjectMap;
 import net.mostlyoriginal.api.plugin.extendedcomponentmapper.M;
@@ -38,7 +37,6 @@ import org.worldloom.light.ShadowVolumeGeometry;
 import org.worldloom.manager.ShaderManager;
 import org.worldloom.render.MapVisibility;
 
-import java.nio.IntBuffer;
 
 /**
  * 为带有TopDownShadow组件的精灵生成并合成俯视角阴影。
@@ -61,8 +59,6 @@ public class TopDownShadowSystem extends BaseSystem {
     private final Vector3 lightAxisU = new Vector3();
     private final Vector3 lightAxisV = new Vector3();
     private final Vector3 lightAxisDepth = new Vector3();
-    private final IntBuffer glStateBuffer = BufferUtils.newIntBuffer(1);
-    private final int[] previousTextureBindings = new int[4];
     private final OpaqueRegionCache opaqueRegions = new OpaqueRegionCache();
     private final ObjectMap<ShadowVolumeGeometry, Mesh> volumeMeshes = new ObjectMap<>();
     private final com.badlogic.gdx.utils.Array<com.badlogic.gdx.utils.Disposable> renderResources = new com.badlogic.gdx.utils.Array<>();
@@ -89,10 +85,8 @@ public class TopDownShadowSystem extends BaseSystem {
     private M<ZIndex> mZIndex;
     private M<SoarHeight> mSoarHeight;
     private M<TopDownShadow> mTopDownShadow;
-    private M<org.worldloom.component.TopDownPointLight> mTopDownPointLight;
 
     private EntitySubscription shadowSubscription;
-    private EntitySubscription pointLightSubscription;
     private RayHandler pointRayHandler;
     private TopDownSunLight sunLight;
     private SpriteBatch spriteBatch;
@@ -119,11 +113,9 @@ public class TopDownShadowSystem extends BaseSystem {
     private float lightDepthMin;
     private float lightDepthMax;
     private float lightDepthBias;
-    private float shadowCameraOriginalX;
-    private float shadowCameraOriginalY;
-    private float shadowUvOffsetX;
-    private float shadowUvOffsetY;
-    private boolean shadowCameraActive;
+    private final ShadowView shadowView = new ShadowView();
+    private ShadowPointLights pointLights;
+    private ShadowCompositePass compositePass;
     public TopDownShadowSystem(float worldScale, TopDownShadowConfig config) {
         this(worldScale, config, new SunLightConfig());
     }
@@ -148,9 +140,6 @@ public class TopDownShadowSystem extends BaseSystem {
     protected void initialize() {
         shadowSubscription = world.getAspectSubscriptionManager().get(
             Aspect.all(Render.class, Pos.class, ZIndex.class, TopDownShadow.class)
-                .exclude(Inert.class));
-        pointLightSubscription = world.getAspectSubscriptionManager().get(
-            Aspect.all(Pos.class, org.worldloom.component.TopDownPointLight.class)
                 .exclude(Inert.class));
 
         RayHandler.useDiffuseLight(true);
@@ -210,6 +199,9 @@ public class TopDownShadowSystem extends BaseSystem {
                 shaderManager.getVertexContext(SHADER_PATH + "screen"),
                 shaderManager.getFragmentContext(SHADER_PATH + "depth_expand"),
                 "Shadow depth expansion");
+            pointLights = new ShadowPointLights(world, worldScale, pointRayHandler);
+            compositePass = new ShadowCompositePass(pixelPerfectRenderSystem, config, screenQuad,
+                sunCompositeShader, pointCompositeShader);
             validateRenderOrder();
             Gdx.app.log(TAG, "Top-down shadow system initialized");
         } catch (RuntimeException | Error failure) {
@@ -241,8 +233,8 @@ public class TopDownShadowSystem extends BaseSystem {
     @Override
     protected void processSystem() {
         shadowTime = (shadowTime + Math.min(world.getDelta(), 1f / 15f)) % 1000f;
-        synchronizePointLights();
-        boolean hasPointLights = hasViewedPointLights();
+        pointLights.synchronize(b2dSystem.box2DWorld);
+        boolean hasPointLights = pointLights.hasViewedLights();
         boolean sunEnabled = config.isSunEnabled(tiledMapSystem.getCurrent());
         if ((!sunEnabled && !hasPointLights)
             || (shadowSubscription.getEntities().isEmpty() && !hasPointLights)) {
@@ -250,9 +242,9 @@ public class TopDownShadowSystem extends BaseSystem {
         }
 
         resizeBuffersIfNeeded();
-        int previousActiveTexture = captureTextureBindings();
+        int previousActiveTexture = shadowView.captureTextureBindings();
         try {
-            beginShadowCamera();
+            shadowView.beginCamera(cameraSystem.camera, bufferWidth, bufferHeight);
             sortShadowEntities();
             renderEntityMask();
             renderHeightMap();
@@ -260,173 +252,32 @@ public class TopDownShadowSystem extends BaseSystem {
             if (sunEnabled) {
                 renderSunShadowMap();
                 renderShadowMasks(sunLight);
-                compositeSunShadow();
+                compositePass.sun(buffers, shadowView, shadowTime);
             }
         } finally {
-            endShadowCamera();
-            restoreTextureBindings(previousActiveTexture);
+            try { shadowView.endCamera(cameraSystem.camera); }
+            finally { shadowView.restoreTextureBindings(previousActiveTexture); }
         }
     }
 
     /** 在环境光合成完成后绘制点光源，避免环境光再次压暗灯光。 */
     void renderPointLightsAfterAmbient() {
-        if (!hasViewedPointLights()) {
+        if (!pointLights.hasViewedLights()) {
             return;
         }
 
         resizeBuffersIfNeeded();
-        int previousActiveTexture = captureTextureBindings();
+        int previousActiveTexture = shadowView.captureTextureBindings();
         try {
-            beginShadowCamera();
-            renderPointLights();
+            shadowView.beginCamera(cameraSystem.camera, bufferWidth, bufferHeight);
+            resizePointBuffersIfNeeded();
+            pointLights.render(cameraSystem.camera, light -> {
+                renderShadowMasks(light);
+                compositePass.point(buffers, shadowView, shadowTime, pointRayHandler.getLightMapTexture());
+            });
         } finally {
-            endShadowCamera();
-            restoreTextureBindings(previousActiveTexture);
-        }
-    }
-
-    /**
-     * 将阴影视图对齐到阴影缓冲自身的纹素网格。
-     * 主世界仍按屏幕像素移动，二者的差值在最终合成时补偿。
-     */
-    private void beginShadowCamera() {
-        if (shadowCameraActive || bufferWidth <= 0 || bufferHeight <= 0) {
-            return;
-        }
-        shadowCameraOriginalX = cameraSystem.camera.position.x;
-        shadowCameraOriginalY = cameraSystem.camera.position.y;
-        float viewWidth = cameraSystem.camera.viewportWidth
-            * cameraSystem.camera.zoom;
-        float viewHeight = cameraSystem.camera.viewportHeight
-            * cameraSystem.camera.zoom;
-        float texelX = viewWidth / bufferWidth;
-        float texelY = viewHeight / bufferHeight;
-        float shadowX = snapDown(shadowCameraOriginalX, texelX);
-        float shadowY = snapDown(shadowCameraOriginalY, texelY);
-        shadowUvOffsetX = (shadowCameraOriginalX - shadowX) / viewWidth;
-        shadowUvOffsetY = (shadowCameraOriginalY - shadowY) / viewHeight;
-        cameraSystem.camera.position.set(
-            shadowX, shadowY, cameraSystem.camera.position.z);
-        cameraSystem.camera.update();
-        shadowCameraActive = true;
-    }
-
-    /** 恢复像素相机本帧用于世界渲染的位置。 */
-    private void endShadowCamera() {
-        if (!shadowCameraActive) {
-            return;
-        }
-        cameraSystem.camera.position.set(
-            shadowCameraOriginalX, shadowCameraOriginalY,
-            cameraSystem.camera.position.z);
-        cameraSystem.camera.update();
-        shadowCameraActive = false;
-    }
-
-    private float snapDown(float value, float step) {
-        if (step <= 0f) {
-            return value;
-        }
-        return (float) Math.floor(value / step) * step;
-    }
-
-    /**
-     * 保存本系统会占用的纹理单元，避免污染海洋等其它多纹理Shader。
-     */
-    private int captureTextureBindings() {
-        int activeTexture = getGlInteger(GL20.GL_ACTIVE_TEXTURE);
-        for (int unit = 0; unit < previousTextureBindings.length; unit++) {
-            Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0 + unit);
-            previousTextureBindings[unit] =
-                getGlInteger(GL20.GL_TEXTURE_BINDING_2D);
-        }
-        Gdx.gl.glActiveTexture(activeTexture);
-        return activeTexture;
-    }
-
-    private void restoreTextureBindings(int activeTexture) {
-        for (int unit = 0; unit < previousTextureBindings.length; unit++) {
-            Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0 + unit);
-            Gdx.gl.glBindTexture(
-                GL20.GL_TEXTURE_2D, previousTextureBindings[unit]);
-        }
-        Gdx.gl.glActiveTexture(activeTexture);
-    }
-
-    private int getGlInteger(int parameter) {
-        glStateBuffer.clear();
-        Gdx.gl.glGetIntegerv(parameter, glStateBuffer);
-        return glStateBuffer.get(0);
-    }
-
-    /** 只统计观察图开启的光源，后台地图不会触发无意义的灯光合成。 */
-    private boolean hasViewedPointLights() {
-        IntBag entities = pointLightSubscription.getEntities();
-        for (int i = 0; i < entities.size(); i++) {
-            int entityId = entities.get(i);
-            if (MapVisibility.inViewedMap(world, entityId) && mTopDownPointLight.get(entityId).onOff) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** 将遮挡世界绑定到观察图，仅为本图创建点光源，避免后台地图污染光照。 */
-    private void synchronizePointLights() {
-        pointRayHandler.setWorld(b2dSystem.box2DWorld);
-        IntBag entities = pointLightSubscription.getEntities();
-        int[] ids = entities.getData();
-        for (int i = 0; i < entities.size(); i++) {
-            int entityId = ids[i];
-            Pos pos = mPos.get(entityId);
-            org.worldloom.component.TopDownPointLight component =
-                mTopDownPointLight.get(entityId);
-            if (!MapVisibility.inViewedMap(world, entityId)) {
-                if (component.light != null) {
-                    component.light.setActive(false);
-                }
-                continue;
-            }
-            if (component.light == null) {
-                component.light = new org.worldloom.light.TopDownPointLight(
-                    pointRayHandler, Math.max(3, component.rays), component.color,
-                    Math.max(0.01f, component.distance * worldScale),
-                    worldScale * (pos.x + component.offsetX),
-                    worldScale * (pos.y + component.offsetY),
-                    Math.max(0.01f, component.height * worldScale));
-            }
-            component.light.setPosition(
-                worldScale * (pos.x + component.offsetX),
-                worldScale * (pos.y + component.offsetY));
-            component.light.setActive(false);
-        }
-    }
-
-    /** 合成观察图所有灯光的影响，屏外光源仍可照亮视域内区域。 */
-    private void renderPointLights() {
-        resizePointBuffersIfNeeded();
-        IntBag entities = pointLightSubscription.getEntities();
-        int[] ids = entities.getData();
-        pointRayHandler.setCombinedMatrix(cameraSystem.camera);
-        for (int i = 0; i < entities.size(); i++) {
-            org.worldloom.component.TopDownPointLight component =
-                mTopDownPointLight.get(ids[i]);
-            if (!MapVisibility.inViewedMap(world, ids[i]) || !component.onOff || component.light == null) {
-                continue;
-            }
-            component.light.setActive(true);
-            pointRayHandler.update();
-            pointRayHandler.prepareRender();
-            renderShadowMasks(component.light);
-            compositePointLight();
-            component.light.setActive(false);
-        }
-        for (int i = 0; i < entities.size(); i++) {
-            org.worldloom.component.TopDownPointLight component =
-                mTopDownPointLight.get(ids[i]);
-            if (component.light != null) {
-                component.light.setActive(component.onOff && MapVisibility.inViewedMap(world, ids[i]));
-            }
+            try { shadowView.endCamera(cameraSystem.camera); }
+            finally { shadowView.restoreTextureBindings(previousActiveTexture); }
         }
     }
 
@@ -1007,59 +858,6 @@ public class TopDownShadowSystem extends BaseSystem {
         return mSoarHeight.has(entityId) ? mSoarHeight.get(entityId).height : 0f;
     }
 
-    private void compositeSunShadow() {
-        pixelPerfectRenderSystem.resumeWorldTarget();
-        Gdx.gl.glEnable(GL20.GL_BLEND);
-        Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
-        bindCompositeMasks(sunCompositeShader);
-        sunCompositeShader.setUniformf(
-            "u_shadowOpacity", config.getSunShadowOpacity());
-        screenQuad.render(sunCompositeShader, GL20.GL_TRIANGLE_FAN);
-        finishComposite();
-    }
-
-    private void compositePointLight() {
-        pixelPerfectRenderSystem.resumeWorldTarget();
-        Gdx.gl.glEnable(GL20.GL_BLEND);
-        Gdx.gl.glBlendFunc(GL20.GL_ONE, GL20.GL_ONE);
-        buffers.receiverShadowMask.getColorBufferTexture().bind(3);
-        buffers.entityMask.getColorBufferTexture().bind(2);
-        buffers.groundShadowMask.getColorBufferTexture().bind(1);
-        pointRayHandler.getLightMapTexture().bind(0);
-        pointCompositeShader.bind();
-        pointCompositeShader.setUniformi("u_lightMap", 0);
-        pointCompositeShader.setUniformi("u_groundShadow", 1);
-        pointCompositeShader.setUniformi("u_entityMask", 2);
-        pointCompositeShader.setUniformi("u_receiverShadow", 3);
-        setCompositeCommonUniforms(pointCompositeShader);
-        screenQuad.render(pointCompositeShader, GL20.GL_TRIANGLE_FAN);
-        finishComposite();
-    }
-
-    private void bindCompositeMasks(ShaderProgram shader) {
-        buffers.receiverShadowMask.getColorBufferTexture().bind(2);
-        buffers.entityMask.getColorBufferTexture().bind(1);
-        buffers.groundShadowMask.getColorBufferTexture().bind(0);
-        shader.bind();
-        shader.setUniformi("u_groundShadow", 0);
-        shader.setUniformi("u_entityMask", 1);
-        shader.setUniformi("u_receiverShadow", 2);
-        setCompositeCommonUniforms(shader);
-    }
-
-    private void setCompositeCommonUniforms(ShaderProgram shader) {
-        shader.setUniformf("u_shadowTexel",
-            1f / bufferWidth, 1f / bufferHeight);
-        shader.setUniformf("u_shadowUvOffset",
-            shadowUvOffsetX, shadowUvOffsetY);
-        shader.setUniformf("u_time", shadowTime);
-    }
-
-    private void finishComposite() {
-        Gdx.gl.glActiveTexture(GL20.GL_TEXTURE0);
-        Gdx.gl.glDisable(GL20.GL_BLEND);
-    }
-
     /** 只有实际需要合成阴影或灯光时才分配；完整集合创建成功后再替换旧集合。 */
     private void resizeBuffersIfNeeded() {
         int width = Math.max(1, Math.round(pixelPerfectRenderSystem.getRenderWidth() * config.getResolutionScale()));
@@ -1087,8 +885,6 @@ public class TopDownShadowSystem extends BaseSystem {
         Gdx.gl.glClearColor(0f, 0f, 0f, 0f);
         Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
     }
-
-
 
     private Mesh createProjectedShadowMesh(int segments) {
         int vertexCount = (segments + 1) * 2;
