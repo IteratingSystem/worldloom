@@ -982,6 +982,8 @@ Screen menu = ScreenManager.getScreen(MenuScreen.class);
 GameManager.getCurrent().setScreen(menu);
 ```
 
+4.23.0起，`GameManager.register(game)`替换同类型旧实例；当前应用若仍指向旧实例，会一并更新。宿主关闭时调用`GameManager.unregister(this)`，按实例身份注销且不会释放资源，旧实例迟到的注销不会移除新实例。注册/切换/注销在宿主主线程执行。
+
 `ScreenManager` 只负责按类保存和查找 Screen，不会自动执行 `Game.setScreen`。
 
 ## 15. 存档、读档与多地图切换
