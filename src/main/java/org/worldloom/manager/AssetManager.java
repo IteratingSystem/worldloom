@@ -20,6 +20,7 @@ import org.worldloom.audio.AudioAssetPath;
 import org.worldloom.Worldloom;
 import java.util.ArrayList;
 import java.util.Objects;
+import java.util.function.Predicate;
 
 
 /**
@@ -121,8 +122,15 @@ public class AssetManager {
      * 依赖于assets模块中的assets.txt
      */
     public void loadAssets() {
+        loadAssets(path -> true);
+    }
+
+    /** 按路径筛选自动预加载资源；被排除的资源仍可显式加载，不改变依赖加载规则。 */
+    public void loadAssets(Predicate<String> include) {
         ensureActive();
+        Objects.requireNonNull(include, "Asset filter cannot be null");
         for (String path : assetPathList) {
+            if (!include.test(path)) continue;
             if (path.startsWith(SOUND_DIR) && isAudioPath(path)) {
                 loadAsset(path, Sound.class);
                 continue;
@@ -175,7 +183,7 @@ public class AssetManager {
     }
 
     /**
-     * 传入类型,获取已加载的所有此类型的对象,最后返回为ObjectMap<name, object>,其中name是文件名,非路径也无后缀
+     * 按后缀汇总已加载资源，以去掉末尾后缀的文件名为键；不同路径重名时报告双方路径，禁止静默覆盖。
      * @param aClass
      * @return
      * @param <T>
@@ -183,6 +191,7 @@ public class AssetManager {
     public <T> ObjectMap<String, T> getObjects(String ext,Class<T> aClass) {
         ensureActive();
         ObjectMap<String, T> objectMap = new ObjectMap<>();
+        ObjectMap<String, String> sources = new ObjectMap<>();
         FileHandle fileHandle;
         for (String path : assetPathList) {
             if (path.endsWith(ext)) {
@@ -191,8 +200,12 @@ public class AssetManager {
                     Gdx.app.log(TAG,"getObjects continue: fileHandle is exists,path: "+path);
                     continue;
                 }
+                String fileName = fileHandle.name();
+                String name = fileName.substring(0, fileName.length() - ext.length());
+                String previous = sources.put(name, path);
+                if (previous != null && !previous.equals(path))
+                    throw new IllegalStateException("Duplicate asset name '" + name + "': " + previous + " and " + path);
                 T obejct = getObejct(path, aClass);
-                String name = fileHandle.name().replace(ext,"");
                 objectMap.put(name,obejct);
             }
         }

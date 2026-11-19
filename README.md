@@ -239,6 +239,12 @@ AssetManager.getInstance().dispose();
 | `.noise.png` | 噪声 `Texture` |
 | `.png` | 普通 `Texture` |
 
+4.25.0 起可用 `assets.loadAssets(path -> !path.endsWith(AssetManager.STORY_EXT))`
+排除由宿主自行管理的 Ink 剧本。无参入口仍预加载全部默认类型；筛选只影响本次入队，
+不影响显式 `loadAsset` 和依赖加载。使用筛选后，不要用 `getObjects` 查询尚未加载的类型。
+独立 NPC 对话可按语言路径缓存只读 JSON 文本，每场会话再创建自己的 `new Story(json)`，
+不能共享可变的 Ink `Story` 或运行状态。
+
 `assets.txt` 必须在打包前由资源模块生成。不要使用 `FileHandle.list()` 扫描 jar 内资源；它在桌面开发目录中可能可用，但打包为 jar 后不可靠。
 
 清单在 `AssetManager` 创建时统一解析：支持 LF/CRLF 换行，去掉行首尾空白与 UTF-8 BOM，
@@ -255,6 +261,9 @@ assets.loadAsset("maps/island.tmx", TiledMap.class);
 TiledMap map = assets.getObejct("maps/island.tmx", TiledMap.class);
 ObjectMap<String, TiledMap> maps = assets.getObjects(".tmx", TiledMap.class);
 ```
+
+`getObjects` 按文件名而非目录登记资源；不同目录的同名地图/剧本会明确报错并列出两个路径，
+应重命名资源并同步引用。只移除末尾后缀，文件名中间相同的字符串保持原样。
 
 注意：当前公开方法名确实是 `getObejct`，拼写不要擅自改成 `getObject`。
 
