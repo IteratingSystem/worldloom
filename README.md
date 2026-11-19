@@ -241,7 +241,9 @@ AssetManager.getInstance().dispose();
 
 4.25.0 起可用 `assets.loadAssets(path -> !path.endsWith(AssetManager.STORY_EXT))`
 排除由宿主自行管理的 Ink 剧本。无参入口仍预加载全部默认类型；筛选只影响本次入队，
-不影响显式 `loadAsset` 和依赖加载。使用筛选后，不要用 `getObjects` 查询尚未加载的类型。
+不影响显式 `loadAsset` 和依赖加载。`getObjects(ext, type)` 只汇总当前已完成加载、类型匹配的资源，
+包括显式加载和依赖加载；筛除、尚未入队及加载中的文件不会触发未加载异常，没有匹配项返回空表。
+汇总名称仅去掉末尾后缀，不同已加载路径同名仍报错并列出双方路径。
 独立 NPC 对话可按语言路径缓存只读 JSON 文本，每场会话再创建自己的 `new Story(json)`，
 不能共享可变的 Ink `Story` 或运行状态。
 

@@ -183,7 +183,8 @@ public class AssetManager {
     }
 
     /**
-     * 按后缀汇总已加载资源，以去掉末尾后缀的文件名为键；不同路径重名时报告双方路径，禁止静默覆盖。
+     * 按后缀和类型汇总当前已加载资源，包含显式及依赖加载；未入队、加载中或被筛除的文件不参与。
+     * 以去掉末尾后缀的文件名为键，不同路径重名时报告双方路径，禁止静默覆盖。
      * @param aClass
      * @return
      * @param <T>
@@ -192,14 +193,11 @@ public class AssetManager {
         ensureActive();
         ObjectMap<String, T> objectMap = new ObjectMap<>();
         ObjectMap<String, String> sources = new ObjectMap<>();
-        FileHandle fileHandle;
-        for (String path : assetPathList) {
-            if (path.endsWith(ext)) {
-                fileHandle = Gdx.files.internal(path);
-                if (!fileHandle.exists()){
-                    Gdx.app.log(TAG,"getObjects continue: fileHandle is exists,path: "+path);
-                    continue;
-                }
+        var loadedPaths = gdxAssetManager.getAssetNames();
+        loadedPaths.sort();
+        for (String path : loadedPaths) {
+            if (path.endsWith(ext) && gdxAssetManager.isLoaded(path, aClass)) {
+                FileHandle fileHandle = resolver.resolve(path);
                 String fileName = fileHandle.name();
                 String name = fileName.substring(0, fileName.length() - ext.length());
                 String previous = sources.put(name, path);
