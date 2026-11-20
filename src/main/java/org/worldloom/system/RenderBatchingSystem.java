@@ -9,7 +9,8 @@ import com.badlogic.gdx.graphics.g2d.Batch;
 import net.mostlyoriginal.api.plugin.extendedcomponentmapper.M;
 import net.mostlyoriginal.api.system.delegate.EntityProcessAgent;
 import net.mostlyoriginal.api.system.delegate.EntityProcessPrincipal;
-import net.mostlyoriginal.api.utils.BagUtils;
+import java.util.Arrays;
+import java.util.Comparator;
 import org.worldloom.component.Render;
 import org.worldloom.component.ZIndex;
 import org.worldloom.render.MapVisibility;
@@ -32,6 +33,9 @@ public class RenderBatchingSystem extends BaseSystem implements EntityProcessPri
     private Batch batch;
     protected final Bag<Job> sortedJobs = new Bag<>();
     private final Bag<Job> visibleJobs = new Bag<>();
+    private final Bag<Job> candidates = new Bag<>();
+    private final Bag<Job> previousCandidates = new Bag<>();
+    private final Comparator<Object> depthOrder = (a, b) -> Float.compare(((Job) a).depth, ((Job) b).depth);
     private final Rectangle viewBounds = new Rectangle();
 
     /** 接入引擎统一的Artemis世界，绘制注册不会拆分后台实体。 */
@@ -51,11 +55,26 @@ public class RenderBatchingSystem extends BaseSystem implements EntityProcessPri
         batch = renderTiledSystem.mapRenderer.getBatch();
     }
 
-    /** 在像素对齐后的实际世界相机视域内筛选并排序任务，保留屏外实体注册。 */
+    /** 逐帧筛选视域并采样一次深度；仅候选或深度改变时稳定排序，保留屏外注册。 */
     @Override
     protected void processSystem() {
+        refreshVisibleJobs();
+        final Object[] data = visibleJobs.getData();
+        updateBatch();
+        batch.begin();
+        for (int i = 0, size = visibleJobs.size(); i < size; i++) {
+            Job job = (Job) data[i];
+            job.agent.process(job.entityId);
+        }
+        batch.flush();
+        batch.end();
+    }
+
+    /** 更新实际视域候选和层级缓存；不依赖Batch或GL资源，可独立核对顺序。 */
+    private void refreshVisibleJobs() {
         updateViewBounds();
-        visibleJobs.clear();
+        candidates.clear();
+        boolean changed = false;
         for (int i = 0; i < sortedJobs.size(); i++) {
             Job job = sortedJobs.get(i);
             if (!MapVisibility.inViewedMap(world, job.entityId)) {
@@ -65,19 +84,24 @@ public class RenderBatchingSystem extends BaseSystem implements EntityProcessPri
                 && !frames.intersectsView(job.entityId, viewBounds)) {
                 continue;
             }
-            visibleJobs.add(job);
+            float depth = mZIndex.has(job.entityId) ? mZIndex.get(job.entityId).index : 0f;
+            if (Float.compare(job.depth, depth) != 0) changed = true;
+            job.depth = depth;
+            int index = candidates.size();
+            if (index >= previousCandidates.size() || previousCandidates.get(index) != job) changed = true;
+            candidates.add(job);
         }
-        BagUtils.sort(visibleJobs);
-        final Object[] data = visibleJobs.getData();
-        updateBatch();
-        batch.begin();
-        for (int i = 0,s = visibleJobs.size();i < s;i++){
-            final Job job = (Job)data[i];
-            final EntityProcessAgent agent = job.agent;
-            agent.process(job.entityId);
+        if (changed || candidates.size() != previousCandidates.size()) {
+            visibleJobs.clear();
+            previousCandidates.clear();
+            for (int i = 0; i < candidates.size(); i++) {
+                visibleJobs.add(candidates.get(i));
+                previousCandidates.add(candidates.get(i));
+            }
+            // 对注册顺序稳定排序：深度相等时不继承上一帧移动造成的次序。
+            Object[] data = visibleJobs.getData();
+            Arrays.sort(data, 0, visibleJobs.size(), depthOrder);
         }
-        batch.flush();
-        batch.end();
     }
 
     /** 从相机视锥的世界坐标构造保守矩形，兼容缩放、旋转与像素缓冲扩边。 */
@@ -124,6 +148,7 @@ public class RenderBatchingSystem extends BaseSystem implements EntityProcessPri
     public class Job implements Comparable<Job>{
         public final int entityId;
         public final EntityProcessAgent agent;
+        private float depth;
 
         /** 保存实体与代理引用，层级在每次排序时读取最新组件。 */
         public Job(final int entityId,final EntityProcessAgent agent){
