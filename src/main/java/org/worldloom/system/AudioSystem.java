@@ -178,6 +178,9 @@ public class AudioSystem extends BaseSystem {
             return;
         }
         instance.nativeId = soundId;
+        instance.appliedVolume = initialVolume;
+        instance.appliedPan = value.pan;
+        instance.volumeApplied = true;
         configureFadeIn(instance, event);
         addInstance(instance);
         applyInitialBusPause(instance);
@@ -252,6 +255,7 @@ public class AudioSystem extends BaseSystem {
             startFade(instance, instance.playbackVolume,
                 instance.restartFadeSeconds, false);
         }
+        instance.volumeApplied = false;
         instance.music.play();
     }
 
@@ -559,16 +563,22 @@ public class AudioSystem extends BaseSystem {
         }
     }
 
+    /** 仅在最终音量或声像改变时提交后端；失败不推进缓存，恢复播放后强制重发。 */
     private void applyInstanceVolume(AudioInstance instance) {
         if (instance.paused || instance.pausedByBus) {
             return;
         }
         VolumePan value = calculateVolumePan(instance);
+        if (instance.volumeApplied && instance.appliedVolume == value.volume
+            && instance.appliedPan == value.pan) return;
         if (instance.sound != null) {
             instance.sound.setPan(instance.nativeId, value.pan, value.volume);
         } else if (instance.music != null) {
             instance.music.setPan(value.pan, value.volume);
         }
+        instance.appliedVolume = value.volume;
+        instance.appliedPan = value.pan;
+        instance.volumeApplied = true;
     }
 
     /** 按距离与地图归属计算音量；离图的跟随音源静音，返回后可继续播放。 */
@@ -702,6 +712,9 @@ public class AudioSystem extends BaseSystem {
         private float restartFadeSeconds;
         private float playbackVolume;
         private boolean waitingForRestart;
+        private boolean volumeApplied;
+        private float appliedVolume;
+        private float appliedPan;
 
         private void pause() {
             if (sound != null) {
@@ -711,7 +724,9 @@ public class AudioSystem extends BaseSystem {
             }
         }
 
+        /** 后端恢复可能重建播放状态，下次提交必须重新写入音量与声像。 */
         private void resume() {
+            volumeApplied = false;
             if (sound != null) {
                 sound.resume(nativeId);
             } else if (music != null) {
