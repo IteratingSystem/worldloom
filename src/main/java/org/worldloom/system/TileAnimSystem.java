@@ -22,6 +22,7 @@ public class TileAnimSystem extends IteratingSystem {
     private M<TileAnimations> mTileAnimations;
     private M<TileAnimation> mTileAnimation;
     private M<Render> mRender;
+    /** 暂停时不采样；播放时推进一次时间并只读取一次目标帧。 */
     @Override
     protected void process(int entityId) {
         Render render = mRender.get(entityId);
@@ -36,17 +37,11 @@ public class TileAnimSystem extends IteratingSystem {
         }else {
             tileAnimation = mTileAnimation.get(entityId);
         }
-        if (tileAnimation.getKeyFrame() == null) {
-            return;
-        }
-
-        //如果暂停
-        if (tileAnimation.isPause){
-            return;
-        }
-
+        if (tileAnimation.isPause || tileAnimation.getkeyframes() == null) return;
         tileAnimation.stateTime += world.getDelta();
-        render.keyframe = tileAnimation.getKeyFrame();
+        var frame = tileAnimation.getKeyFrame();
+        if (frame == null) return;
+        render.keyframe = frame;
         render.offsetX = tileAnimation.offsetX;
         render.offsetY = tileAnimation.offsetY;
     }
