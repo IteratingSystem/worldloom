@@ -233,7 +233,9 @@ public class TopDownShadowSystem extends BaseSystem {
     @Override
     protected void processSystem() {
         shadowTime = (shadowTime + Math.min(world.getDelta(), 1f / 15f)) % 1000f;
-        pointLights.synchronize(b2dSystem.box2DWorld);
+        pointLights.synchronize(b2dSystem.box2DWorld, cameraSystem.camera,
+            Math.max(1, Math.round(pixelPerfectRenderSystem.getRenderWidth() * config.getResolutionScale())),
+            Math.max(1, Math.round(pixelPerfectRenderSystem.getRenderHeight() * config.getResolutionScale())));
         boolean hasPointLights = pointLights.hasViewedLights();
         boolean sunEnabled = config.isSunEnabled(tiledMapSystem.getCurrent());
         if ((!sunEnabled && !hasPointLights)

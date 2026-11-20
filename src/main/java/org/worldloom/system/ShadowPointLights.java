@@ -19,6 +19,9 @@ final class ShadowPointLights {
     private final ComponentMapper<org.worldloom.component.TopDownPointLight> mTopDownPointLight;
     private final EntitySubscription pointLightSubscription;
 
+    private final IntBag viewedLights = new IntBag();
+    private final com.badlogic.gdx.math.Rectangle viewBounds = new com.badlogic.gdx.math.Rectangle();
+
     /** 只订阅现有实体，后台地图灯光不创建渲染资源。 */
     ShadowPointLights(World world, float scale, RayHandler handler) {
         this.world = world;
@@ -30,20 +33,35 @@ final class ShadowPointLights {
             Aspect.all(Pos.class, org.worldloom.component.TopDownPointLight.class).exclude(Inert.class));
     }
 
-    /** 只统计观察图开启的光源，后台地图不会触发无意义的灯光合成。 */
-    boolean hasViewedLights() {
-        IntBag entities = pointLightSubscription.getEntities();
-        for (int i = 0; i < entities.size(); i++) {
-            int entityId = entities.get(i);
-            if (MapVisibility.inViewedMap(world, entityId) && mTopDownPointLight.get(entityId).onOff) {
-                return true;
-            }
+    /** 复用本帧已筛选的灯光；完全不能影响视域的灯不触发合成。 */
+    boolean hasViewedLights() { return !viewedLights.isEmpty(); }
+
+    /** 按完整视锥与一纹素对齐余量构造保守范围，保留屏外可照入的光源。 */
+    private void updateView(com.badlogic.gdx.graphics.OrthographicCamera camera, int width, int height) {
+        float minX = Float.POSITIVE_INFINITY, minY = Float.POSITIVE_INFINITY;
+        float maxX = Float.NEGATIVE_INFINITY, maxY = Float.NEGATIVE_INFINITY;
+        for (var corner : camera.frustum.planePoints) {
+            minX = Math.min(minX, corner.x); minY = Math.min(minY, corner.y);
+            maxX = Math.max(maxX, corner.x); maxY = Math.max(maxY, corner.y);
         }
-        return false;
+        float padX = Math.abs(camera.viewportWidth * camera.zoom) / Math.max(1, width);
+        float padY = Math.abs(camera.viewportHeight * camera.zoom) / Math.max(1, height);
+        viewBounds.set(minX - padX, minY - padY, maxX - minX + 2 * padX, maxY - minY + 2 * padY);
+    }
+
+    /** 圆形照明范围与保守视域相交才需要逐灯更新；非有限配置保留旧处理路径。 */
+    private boolean affectsView(float x, float y, float radius) {
+        if (!Float.isFinite(x) || !Float.isFinite(y) || !Float.isFinite(radius)) return true;
+        float dx = Math.max(viewBounds.x - x, Math.max(0f, x - viewBounds.x - viewBounds.width));
+        float dy = Math.max(viewBounds.y - y, Math.max(0f, y - viewBounds.y - viewBounds.height));
+        return (double) dx * dx + (double) dy * dy <= (double) radius * radius;
     }
 
     /** 将遮挡世界绑定到观察图，仅为本图创建点光源，避免后台地图污染光照。 */
-    void synchronize(com.badlogic.gdx.physics.box2d.World physics) {
+    void synchronize(com.badlogic.gdx.physics.box2d.World physics,
+                     com.badlogic.gdx.graphics.OrthographicCamera camera, int width, int height) {
+        updateView(camera, width, height);
+        viewedLights.clear();
         pointRayHandler.setWorld(physics);
         IntBag entities = pointLightSubscription.getEntities();
         int[] ids = entities.getData();
@@ -52,7 +70,11 @@ final class ShadowPointLights {
             Pos pos = mPos.get(entityId);
             org.worldloom.component.TopDownPointLight component =
                 mTopDownPointLight.get(entityId);
-            if (!MapVisibility.inViewedMap(world, entityId)) {
+            float x = worldScale * (pos.x + component.offsetX);
+            float y = worldScale * (pos.y + component.offsetY);
+            float radius = component.light == null ? Math.max(0.01f, component.distance * worldScale)
+                : component.light.getDistance();
+            if (!MapVisibility.inViewedMap(world, entityId) || !component.onOff || !affectsView(x, y, radius)) {
                 if (component.light != null) {
                     component.light.setActive(false);
                 }
@@ -70,12 +92,13 @@ final class ShadowPointLights {
                 worldScale * (pos.x + component.offsetX),
                 worldScale * (pos.y + component.offsetY));
             component.light.setActive(false);
+            viewedLights.add(entityId);
         }
     }
 
     /** 合成观察图所有灯光的影响，屏外光源仍可照亮视域内区域。 */
     void render(com.badlogic.gdx.graphics.OrthographicCamera camera, java.util.function.Consumer<org.worldloom.light.TopDownShadowLight> composite) {
-        IntBag entities = pointLightSubscription.getEntities();
+        IntBag entities = viewedLights;
         int[] ids = entities.getData();
         pointRayHandler.setCombinedMatrix(camera);
         try {
