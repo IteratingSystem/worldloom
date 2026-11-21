@@ -8,14 +8,15 @@ import com.badlogic.gdx.maps.MapObject;
 import com.badlogic.gdx.maps.MapObjects;
 import com.badlogic.gdx.maps.tiled.TiledMap;
 import com.badlogic.gdx.maps.tiled.TiledMapTile;
-import com.badlogic.gdx.maps.tiled.TiledMapTileLayer;
 import com.badlogic.gdx.maps.tiled.TiledMapTileSet;
+import com.badlogic.gdx.maps.tiled.tiles.AnimatedTiledMapTile;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.ObjectMap;
 import com.badlogic.gdx.utils.IntMap;
 import org.worldloom.manager.AssetManager;
 import org.worldloom.serialize.EntitySerializer;
 import org.worldloom.serialize.data.EntityData;
+import java.util.IdentityHashMap;
 
 /**
  * @Auther WenLong
@@ -36,6 +37,8 @@ public class MapManager {
     private ObjectMap<String, EntityData> protoEntityData;
     private Bag<TiledMapTileSet> tileSets;
     private final java.util.Map<TiledMapTileSet, org.worldloom.map.TileAnimationIndex> animationIndexes = new java.util.IdentityHashMap<>();
+    /** 每个纹理区域只修补一次，避免大地图按瓦片重复修改同一图集区域。 */
+    private final IdentityHashMap<TextureRegion, Boolean> filledRegions = new IdentityHashMap<>();
 
     /** 缓存图集的动作与帧碰撞描述；纹理、图块和缓存共同归资源会话管理，不引用游戏World。 */
     public org.worldloom.map.TileAnimationIndex animationIndex(TiledMapTileSet tiles) {
@@ -47,7 +50,12 @@ public class MapManager {
     public void invalidateAnimationIndex(TiledMapTileSet tiles) { animationIndexes.remove(tiles); }
 
     /** 应用释放资源前清理解析目录，避免额外持有已销毁纹理和图集定义。 */
-    public static void clearAnimationIndexes() { if (instance != null) instance.animationIndexes.clear(); }
+    public static void clearAnimationIndexes() {
+        if (instance != null) {
+            instance.animationIndexes.clear();
+            instance.filledRegions.clear();
+        }
+    }
 
 
     private MapManager(ObjectMap<String, String> entityLayerNames,
@@ -185,29 +193,22 @@ public class MapManager {
 
     //填充图像边缘区域,修复地图分裂问题
     private void fillSplit(TiledMap tiledMap){
-        //解决地图开裂的bug
-        for (MapLayer layer : tiledMap.getLayers()) {
-            if (layer instanceof TiledMapTileLayer tileLayer) {
-                for (int x = 0; x < tileLayer.getWidth(); x++) {
-                    for (int y = 0; y < tileLayer.getHeight(); y++) {
-                        TiledMapTileLayer.Cell cell = tileLayer.getCell(x, y);
-                        if (cell != null) {
-                            TextureRegion region = cell.getTile().getTextureRegion();
-                            fillSplit(region);
-                        }
+        // 直接遍历图集中的唯一图块，避免按1280×896地图的每个瓦片重复扫描。
+        for (TiledMapTileSet tileSet : tiledMap.getTileSets()) {
+            for (TiledMapTile tile : tileSet) {
+                fillSplit(tile.getTextureRegion());
+                if (tile instanceof AnimatedTiledMapTile animated) {
+                    for (TiledMapTile frame : animated.getFrameTiles()) {
+                        fillSplit(frame.getTextureRegion());
                     }
                 }
             }
         }
     }
-    private void fillSplit(TextureRegion[][] region) {
-        for (TextureRegion[] array : region) {
-            for (TextureRegion texture : array) {
-                fillSplit(texture);
-            }
-        }
-    }
+
+    /** 对尚未处理的图集区域收缩采样边界，避免重复修改坐标并降低地图初始化开销。 */
     private void fillSplit(TextureRegion region) {
+        if (region == null || filledRegions.put(region, Boolean.TRUE) != null) return;
         // 填充值
         float fix = 0.01f;
         float x = region.getRegionX();
