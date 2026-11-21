@@ -1695,3 +1695,4 @@ int correct = PixelPalette.countMatches(target, paintedIndices);
 - 点光按实际照明圆与相机完整视锥保守相交筛选，包含阴影相机一纹素对齐余量；不能照入画面的灯不创建新的点光资源，也不执行逐灯更新/合成。能照入视域的屏外灯及投影者继续保留，灯光移动、开关、观察图和相机变化逐帧重算。
 
 - 4.25.5：TileAnimSystem 对暂停动画不查询帧；播放时推进时间后仅采样一次，仍由业务显式设置暂停时的显示帧。
+- 4.25.6：RenderUISystem 销毁世界时释放实现 Disposable 的注册UI资源，避免页面自有FBO和纹理跨世界残留。

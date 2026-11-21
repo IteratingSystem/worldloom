@@ -5,6 +5,7 @@ import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.scenes.scene2d.ui.Stack;
 import com.badlogic.gdx.scenes.scene2d.ui.Table;
+import com.badlogic.gdx.utils.Disposable;
 import com.badlogic.gdx.utils.ObjectMap;
 import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import net.mostlyoriginal.api.event.common.Subscribe;
@@ -64,6 +65,15 @@ public class RenderUISystem extends BaseSystem {
         Stage stage = mainStage;
         mainStage = null;
         stack = null;
+        for (Table table : uiMap.values()) {
+            if (table instanceof Disposable disposable) {
+                try {
+                    disposable.dispose();
+                } catch (RuntimeException error) {
+                    Gdx.app.error(TAG, "Failed to dispose UI resource", error);
+                }
+            }
+        }
         uiMap.clear();
         InputManager.removeProcessor(stage);
         stage.dispose();
