@@ -1697,3 +1697,4 @@ int correct = PixelPalette.countMatches(target, paintedIndices);
 - 4.25.5：TileAnimSystem 对暂停动画不查询帧；播放时推进时间后仅采样一次，仍由业务显式设置暂停时的显示帧。
 - 4.25.6：RenderUISystem 销毁世界时释放实现 Disposable 的注册UI资源，避免页面自有FBO和纹理跨世界残留。
 - 4.25.7：MapManager按图集唯一图块修补纹理采样边缘，避免扩容地图初始化时按每个瓦片重复处理造成窗口短暂未响应。
+- 4.25.8：`combineTileShapes=false` 时按含碰撞对象的瓦片坐标解析物理层，保持原始形状语义并跳过空瓦片的对象遍历。

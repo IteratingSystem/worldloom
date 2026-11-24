@@ -20,6 +20,7 @@ import org.worldloom.box2d.listener.DefContactListener;
 import org.worldloom.component.MapMembership;
 import org.worldloom.component.B2dBody;
 import org.worldloom.event.B2dEvent;
+import org.worldloom.physics.SparseTiledTileCollisionToBox2d;
 
 /** 在同一ECS内维护各正式地图独立的物理世界，观察图只影响兼容入口。 */
 public class B2dSystem extends BaseSystem {
@@ -37,6 +38,7 @@ public class B2dSystem extends BaseSystem {
     /** 当前观察地图的旧接口；实体业务应调用getWorldForEntity。 */
     public World box2DWorld;
     public TiledTileCollisionToBox2d tiledTileCollisionToBox2d;
+    private SparseTiledTileCollisionToBox2d sparseTileCollisionToBox2d;
     public Bag<Body> tileCollider = new Bag<>();
 
     /** 只保存物理参数；原生世界延迟到initialize创建，安装系统失败不占用原生资源。 */
@@ -156,11 +158,19 @@ public class B2dSystem extends BaseSystem {
             tiledTileCollisionToBox2d = new TiledTileCollisionToBox2d(TiledTileCollisionToBox2dOptions.builder()
                 .scale(worldScale).combineTileCollisions(combineTileCollisions)
                 .triangulateInsteadOfThrow(true).build());
+        if (!combineTileCollisions && sparseTileCollisionToBox2d == null)
+            sparseTileCollisionToBox2d = new SparseTiledTileCollisionToBox2d(
+                TiledTileCollisionToBox2dOptions.builder()
+                    .scale(worldScale).combineTileCollisions(false)
+                    .triangulateInsteadOfThrow(true).build());
         Array<Body> before = new Array<>(); physics.getBodies(before);
         MapLayer[] layers = tiledMapSystem.getPhyLayer(mapId);
         if (layers != null) for (MapLayer layer : layers)
             if (layer instanceof TiledMapTileLayer tileLayer)
-                tiledTileCollisionToBox2d.parseLayer(tileLayer, physics);
+                if (combineTileCollisions)
+                    tiledTileCollisionToBox2d.parseLayer(tileLayer, physics);
+                else
+                    sparseTileCollisionToBox2d.parseLayer(tileLayer, physics);
         Array<Body> after = new Array<>(); physics.getBodies(after);
         for (Body body : after) if (!before.contains(body, true)) colliders.add(body);
         if (mapId.equals(tiledMapSystem.getCurrent())) tileCollider = colliders;
@@ -248,5 +258,7 @@ public class B2dSystem extends BaseSystem {
         physicsRemainder = 0;
         lastStepSeconds = 0;
         mapWorlds.clear(); tileColliders.clear(); tileCollider.clear(); box2DWorld = null;
+        tiledTileCollisionToBox2d = null;
+        sparseTileCollisionToBox2d = null;
     }
 }
